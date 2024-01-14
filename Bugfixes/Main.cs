@@ -18,7 +18,7 @@ using System.Globalization;
 
 namespace Bugfixes
 {
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.1")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.2")]
     [BepInDependency("com.aidanamite.ConfigTweaks")]
     public class Main : BaseUnityPlugin
     {
@@ -32,6 +32,11 @@ namespace Bugfixes
         public static BepInEx.Logging.ManualLogSource LogSource;
         public void Awake()
         {
+            foreach (var c in Environment.CurrentDirectory)
+                if (c > 127) {
+                    Logger.LogError("\n\n=================================================================\n===============                                   ===============\n===============     INVALID CHAR IN FILE PATH     ===============\n===============      this will cause errors!      ===============\n===============                                   ===============\n=================================================================\n");
+                    break;
+                }
             LogSource = Logger;
             new Harmony("com.aidanamite.Bugfixes").PatchAll();
             Logger.LogInfo("Loaded");
