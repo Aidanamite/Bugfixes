@@ -18,7 +18,7 @@ using System.Globalization;
 
 namespace Bugfixes
 {
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.0")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.1")]
     [BepInDependency("com.aidanamite.ConfigTweaks")]
     public class Main : BaseUnityPlugin
     {
@@ -370,20 +370,34 @@ namespace Bugfixes
         static IEnumerable<MethodBase> TargetMethods()
         {
             var l = new List<MethodBase>();
-            foreach (var t in typeof(DragonClass).Assembly.GetTypes())
-                if (!t.IsGenericTypeDefinition && t != typeof(UiStoreDragonStat) && t != typeof(UiTitanInfo))
-                    foreach (var m in t.GetMethods(~BindingFlags.Default))
-                        if (!m.IsGenericMethodDefinition)
-                            try
-                            {
-                                foreach (var i in PatchProcessor.GetCurrentInstructions(m))
-                                    if (i.opcode == OpCodes.Ldfld && i.operand is FieldInfo f && f.Name == "_NameText" && f.DeclaringType == typeof(SanctuaryPetTypeInfo))
-                                    {
-                                        l.Add(m);
-                                        break;
-                                    }
-                            }
-                            catch { }
+            foreach (var t in new[] {
+                typeof(JSGames.UI.Util.UIUtil),
+                typeof(KAUISelectDragonMenu),
+                typeof(UiChooseADragon),
+                typeof(UiDragonCustomization),
+                typeof(UiDragonsAgeUpMenuItem),
+                typeof(UiDragonsInfoCardItem),
+                typeof(UiDragonsListCard),
+                typeof(UiDragonsListCardMenu),
+                typeof(UiMessageInfoUserData),
+                typeof(UiMOBASelectDragon),
+                typeof(UiSelectHeroDragons),
+                typeof(UiStableQuestCompleteMenu),
+                typeof(UiStableQuestDragonSelect),
+                typeof(WsUserMessage)
+            })
+                foreach (var m in t.GetMethods(~BindingFlags.Default))
+                    if (!m.IsGenericMethodDefinition)
+                        try
+                        {
+                            foreach (var i in PatchProcessor.GetCurrentInstructions(m))
+                                if (i.opcode == OpCodes.Ldfld && i.operand is FieldInfo f && f.Name == "_NameText" && f.DeclaringType == typeof(SanctuaryPetTypeInfo))
+                                {
+                                    l.Add(m);
+                                    break;
+                                }
+                        }
+                        catch { }
             return l;
         }
         static bool CorrectType(Type type, MethodBase method) => typeof(RaisedPetData).IsAssignableFrom(type) || typeof(SanctuaryPet).IsAssignableFrom(type) || typeof(HeroPetData).IsAssignableFrom(type) || typeof(KAUISelectDragon).IsAssignableFrom(type) || (method.Name == "ReplaceTagWithPetData" && typeof(RewardData).IsAssignableFrom(type));
