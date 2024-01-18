@@ -18,7 +18,7 @@ using System.Globalization;
 
 namespace Bugfixes
 {
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.2")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.6")]
     [BepInDependency("com.aidanamite.ConfigTweaks")]
     public class Main : BaseUnityPlugin
     {
@@ -30,17 +30,43 @@ namespace Bugfixes
         public static bool DisplayDragonGender = true;
 
         public static BepInEx.Logging.ManualLogSource LogSource;
+        bool TestPatchMethod() => false;
+        static IEnumerable<CodeInstruction> TestPatch(IEnumerable<CodeInstruction> instructions) => new[] { new CodeInstruction(OpCodes.Ldc_I4_1), new CodeInstruction(OpCodes.Ret) };
         public void Awake()
         {
-            foreach (var c in Environment.CurrentDirectory)
-                if (c > 127) {
-                    Logger.LogError("\n\n=================================================================\n===============                                   ===============\n===============     INVALID CHAR IN FILE PATH     ===============\n===============      this will cause errors!      ===============\n===============                                   ===============\n=================================================================\n");
-                    break;
+            try
+            {
+                var target = AccessTools.Method(typeof(Main), nameof(TestPatchMethod));
+                new Harmony("com.aidanamite.Bugfixes").Patch(target, transpiler: new HarmonyMethod(AccessTools.Method(typeof(Main), nameof(TestPatch))));
+                if (!(bool)target.Invoke(this, new object[0]))
+                {
+                    errMsg = "There was an unknown issue loading mods";
+                    Logger.LogError("\n\n=================================================================\n===============                                   ===============\n===============  PATCH FAILED WITHOUT EXCEPTION!  ===============\n===============       this may cause issues       ===============\n===============                                   ===============\n=================================================================\n");
                 }
+            }
+            catch
+            {
+                bool invalid = false;
+                foreach (var c in Environment.CurrentDirectory)
+                    if (c > 127)
+                    {
+                        invalid = true;
+                        errMsg = "There was an error loading mods which may be caused by invalid letters/symbols in the file path. Try moving the game into another folder";
+                        Logger.LogError("\n\n==================================================================\n===============                                    ===============\n===============    PATCH FAILED WITH EXCEPTION!    ===============\n===============     this is probably caused by     ===============\n===============     invalid chars in game path     ===============\n===============                                    ===============\n==================================================================\n");
+                        break;
+                    }
+                if (!invalid)
+                {
+                    errMsg = "There was an unknown error loading mods";
+                    Logger.LogError("\n\n==================================================================\n===============                                    ===============\n===============    PATCH FAILED WITH EXCEPTION!    ===============\n===============    the cause of this is unknown    ===============\n===============                                    ===============\n==================================================================\n");
+                }
+            }
             LogSource = Logger;
             new Harmony("com.aidanamite.Bugfixes").PatchAll();
             Logger.LogInfo("Loaded");
         }
+
+        string errMsg;
 
         public void OnDestroy()
         {
@@ -54,6 +80,12 @@ namespace Bugfixes
                 foreach (var i in FindObjectsOfType<KAUI>())
                     if (i.GetVisibility())
                         i.SetInteractive(true);
+
+            if (errMsg != null && UiLogin.pInstance)
+            {
+                GameUtilities.DisplayOKMessage("PfKAUIGenericDB", errMsg, null, "");
+                errMsg = null;
+            }
         }
 
         public static void GetDetailedString(StackTrace t, StringBuilder s)
@@ -189,6 +221,15 @@ namespace Bugfixes
         static FieldInfo _mDragonMale = typeof(UiDragonCustomization).GetField("mDragonMale", ~BindingFlags.Default);
         public static bool IsMale(this UiDragonCustomization ui) => (bool)_mDragonMale.GetValue(ui);
         public static void IsMale(this UiDragonCustomization ui, bool newValue) => _mDragonMale.SetValue(ui, newValue);
+        static FieldInfo _mToggleBtnMale = typeof(UiDragonCustomization).GetField("mToggleBtnMale", ~BindingFlags.Default);
+        public static KAToggleButton GetButtonMale(this UiDragonCustomization ui) => (KAToggleButton)_mToggleBtnMale.GetValue(ui);
+        static FieldInfo _mToggleBtnFemale = typeof(UiDragonCustomization).GetField("mToggleBtnFemale", ~BindingFlags.Default);
+        public static KAToggleButton GetButtonFemale(this UiDragonCustomization ui) => (KAToggleButton)_mToggleBtnFemale.GetValue(ui);
+        static FieldInfo _StartChecked = typeof(KAToggleButton).GetField("_StartChecked", ~BindingFlags.Default);
+        public static void SetStartChecked(this KAToggleButton ui, bool value) => _StartChecked.SetValue(ui,value);
+
+        static MethodInfo _pGamePlayTime = typeof(SquadTactics.GameManager).GetProperty("pGamePlayTime", ~BindingFlags.Default).GetSetMethod(true);
+        public static void SetGamePlayTime(this SquadTactics.GameManager manager, float value) => _pGamePlayTime.Invoke(manager,new object[] { value });
     }
 
     // Fixes a bug where the server would double send a mission complete message that causes an error that softlocks the game
@@ -574,6 +615,20 @@ namespace Bugfixes
         }
     }
 
+    // Makes the UI update when changing the dragon's gender so that the gender display in the hatching UI doesn't just say "Male" the whole time
+    [HarmonyPatch(typeof(UiDragonCustomization),"OnClick")]
+    static class Patch_UpdateCustomization
+    {
+        static void Postfix(UiDragonCustomization __instance, KAWidget inItem, ref bool ___mUiRefresh, KAToggleButton ___mToggleBtnFemale, KAToggleButton ___mToggleBtnMale, bool ___mDragonMale)
+        {
+            if (Main.DisplayDragonGender && (inItem == ___mToggleBtnMale || inItem == ___mToggleBtnFemale))
+            {
+                __instance.pPetData.Gender = ___mDragonMale ? Gender.Male : Gender.Female;
+                ___mUiRefresh = true;
+            }
+        }
+    }
+
     // Used by the dragon gender display in situations where a set of IL instructions could not be found to append the current pet to the stack.
     // This will remember the last pet instance returned by 2 functions which is then used in place of existing IL
     [HarmonyPatch]
@@ -589,6 +644,7 @@ namespace Bugfixes
         static void Postfix(RaisedPetData __result) => recent = __result;
     }
 
+    // Fixes a bug where the dragon's gender would be reset to Male after customizing your dragon post-hatch
     [HarmonyPatch(typeof(KAUISelectDragon), "set_pPetData")]
     static class Patch_SetSelectedPet
     {
@@ -596,6 +652,47 @@ namespace Bugfixes
         {
             if (__instance is UiDragonCustomization ui)
                 ui.IsMale(ui.pPetData.Gender == Gender.Male);
+        }
+    }
+
+    // Fixes a bug where the default enabled gender button was not the same as the current dragon's gender
+    [HarmonyPatch(typeof(UiDragonCustomization), "Initialize")]
+    static class Patch_InitDragonCustomization
+    {
+        static void Postfix(UiDragonCustomization __instance, KAToggleButton ___mToggleBtnFemale, KAToggleButton ___mToggleBtnMale)
+        {
+            if (___mToggleBtnMale)
+            {
+                ___mToggleBtnMale.SetChecked(__instance.IsMale());
+                ___mToggleBtnMale.SetStartChecked(__instance.IsMale());
+            }
+            if (___mToggleBtnFemale)
+            {
+                ___mToggleBtnFemale.SetChecked(!__instance.IsMale());
+                ___mToggleBtnFemale.SetStartChecked(!__instance.IsMale());
+            }
+        }
+    }
+
+    // Fixes a bug where you could click on battle objects underneath UI buttons sometimes causing unintended actions
+    [HarmonyPatch(typeof(SquadTactics.GameManager),"Update")]
+    static class Patch_SquadGameUpdate
+    {
+        static bool MouseDown = false;
+        static bool Prefix(SquadTactics.GameManager __instance)
+        {
+            if (MouseDown)
+            {
+                if (Input.GetMouseButtonUp(0))
+                    MouseDown = false;
+            }
+            else if (Input.GetMouseButtonDown(0) && KAUI.GetGlobalMouseOverItem())
+                MouseDown = true;
+            else
+                return true;
+            if (__instance._GameState != SquadTactics.GameManager.GameState.GAMEOVER)
+                __instance.SetGamePlayTime(__instance.pGamePlayTime + Time.deltaTime);
+            return false;
         }
     }
 
