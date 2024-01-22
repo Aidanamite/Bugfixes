@@ -28,6 +28,8 @@ namespace Bugfixes
         public static bool FixGrowthUI = true;
         [ConfigField]
         public static bool DisplayDragonGender = true;
+        [ConfigField]
+        public static bool UIFrameThrottling = true;
         [ConfigField(Description = "DEV PURPOSES ONLY: This can take a long time to load (the game will be frozen during this time) and may have significant performance impact while active")]
         public static bool EnableLagSpikeProfiling = false;
         [ConfigField]
@@ -90,7 +92,7 @@ namespace Bugfixes
                         i.SetInteractive(true);
 
             updateStep = (updateStep + 1) % ((int)(Patch_Widget.count * 11L / 80000) + 1);
-            AllowUIUpdate = updateStep == 0;
+            AllowUIUpdate = !UIFrameThrottling || updateStep == 0;
 
             if (errMsg != null && UiLogin.pInstance)
             {
