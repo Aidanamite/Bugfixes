@@ -18,7 +18,7 @@ using System.Globalization;
 
 namespace Bugfixes
 {
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.8")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.9")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
     {
@@ -80,12 +80,17 @@ namespace Bugfixes
             Process.GetCurrentProcess().Kill();
         }
 
+        public static bool AllowUIUpdate = true;
+        int updateStep;
         public void Update()
         {
             if (Input.GetKeyDown(ForceInteractable)) // A workaround for UIs not being interactable when they should've been. Sometimes there's still issues after getting out of the UI
                 foreach (var i in FindObjectsOfType<KAUI>())
                     if (i.GetVisibility())
                         i.SetInteractive(true);
+
+            updateStep = (updateStep + 1) % ((int)(Patch_Widget.count * 11L / 80000) + 1);
+            AllowUIUpdate = updateStep == 0;
 
             if (errMsg != null && UiLogin.pInstance)
             {
@@ -779,6 +784,7 @@ namespace Bugfixes
         }
     }
 
+    // Fixes some FPS issues in Dragon Tactics caused by use of GameObject.Find
     [HarmonyPatch(typeof(UIButtonProcessor),"Update")]
     static class Patch_ButtonFind
     {
@@ -803,10 +809,27 @@ namespace Bugfixes
         }
     }
 
+    // Fixes some FPS issues in Dragon Tactics caused the by the game loading the battle backpack for some unknown reason
     [HarmonyPatch(typeof(KAUISelectMenu), "FinishMenuItems")]
     static class Patch_PreventItemMenuLoad
     {
         static bool Prefix() => !SquadTactics.GameManager.pInstance;
+    }
+
+    // Allows limiting of the UI framerate based on the number of UI objects present. AllowUIUpdate is updated in Main.Update
+    [HarmonyPatch(typeof(KAWidget))]
+    static class Patch_Widget
+    {
+        public static int count;
+        [HarmonyPatch("Awake")]
+        [HarmonyPrefix]
+        static void Awake() => count++;
+        [HarmonyPatch("OnDestroy")]
+        [HarmonyPrefix]
+        static void Destroy() => count--;
+        [HarmonyPatch("Update")]
+        [HarmonyPrefix]
+        static bool Update() => Main.AllowUIUpdate;
     }
 
     static class Patch_UpdateProfiling
