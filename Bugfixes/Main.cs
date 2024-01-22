@@ -18,8 +18,8 @@ using System.Globalization;
 
 namespace Bugfixes
 {
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.6")]
-    [BepInDependency("com.aidanamite.ConfigTweaks")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.8")]
+    [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
     {
         [ConfigField]
@@ -28,6 +28,12 @@ namespace Bugfixes
         public static bool FixGrowthUI = true;
         [ConfigField]
         public static bool DisplayDragonGender = true;
+        [ConfigField(Description = "DEV PURPOSES ONLY: This can take a long time to load (the game will be frozen during this time) and may have significant performance impact while active")]
+        public static bool EnableLagSpikeProfiling = false;
+        [ConfigField]
+        public static long LagThreashold = 200000;
+        [ConfigField]
+        public static double LagDisplayThreashold = 0.5;
 
         public static BepInEx.Logging.ManualLogSource LogSource;
         bool TestPatchMethod() => false;
@@ -37,7 +43,7 @@ namespace Bugfixes
             try
             {
                 var target = AccessTools.Method(typeof(Main), nameof(TestPatchMethod));
-                new Harmony("com.aidanamite.Bugfixes").Patch(target, transpiler: new HarmonyMethod(AccessTools.Method(typeof(Main), nameof(TestPatch))));
+                new Harmony("com.aidanamite.Bugfixes.TestPatch").Patch(target, transpiler: new HarmonyMethod(AccessTools.Method(typeof(Main), nameof(TestPatch))));
                 if (!(bool)target.Invoke(this, new object[0]))
                 {
                     errMsg = "There was an unknown issue loading mods";
@@ -85,6 +91,83 @@ namespace Bugfixes
             {
                 GameUtilities.DisplayOKMessage("PfKAUIGenericDB", errMsg, null, "");
                 errMsg = null;
+            }
+            if (Patch_UpdateProfiling.total > 0)
+            {
+                var v = Patch_UpdateProfiling.recorded;
+                Patch_UpdateProfiling.recorded = new Dictionary<MethodBase, (long,int)>();
+                var t = Patch_UpdateProfiling.total;
+                Patch_UpdateProfiling.total = 0;
+                if (t >= LagThreashold)
+                {
+                    var sort = new SortedList<long, (MethodBase,int)>(new SortProfile());
+                    foreach (var p in v)
+                        sort.Add(p.Value.Item1, (p.Key,p.Value.Item2));
+                    var s = new StringBuilder();
+                    s.Append("Frame took ");
+                    s.Append(t / 10000);
+                    s.Append("ms");
+                    var subtotal = 0L;
+                    var threshold = 0L;
+                    foreach (var p in sort)
+                    {
+                        if (threshold == 0)
+                            threshold = (long)(p.Key * LagDisplayThreashold);
+                        if (p.Key < threshold)
+                            break;
+                        subtotal += p.Key;
+                        s.Append("\n[");
+                        if (p.Key > 100000)
+                            s.Append(p.Key / 10000);
+                        else
+                            s.Append(Math.Round(p.Key / 10000.0,2));
+                        if (p.Value.Item2 != 1)
+                        {
+                            s.Append(" | ");
+                            s.Append(p.Value.Item2);
+                        }
+                        s.Append("] ==== ");
+                        s.Append(p.Value.Item1.DeclaringType.FullName);
+                        s.Append("::");
+                        s.Append(p.Value.Item1);
+                    }
+                    s.Append("\nDisplayed values total to ");
+                    s.Append(subtotal / 10000);
+                    s.Append("ms");
+                    Logger.LogWarning(s.ToString());
+                }
+            }
+            if (EnableLagSpikeProfiling && !appliedProfiling)
+            {
+                appliedProfiling = true;
+                Patch_UpdateProfiling.main = Thread.CurrentThread;
+                var h = new Harmony("com.aidanamite.Bugfixes.Profiling");
+                var prefix = new HarmonyMethod(typeof(Patch_UpdateProfiling).GetMethod(nameof(Patch_UpdateProfiling.Prefix)));
+                var final = new HarmonyMethod(typeof(Patch_UpdateProfiling).GetMethod(nameof(Patch_UpdateProfiling.Finalizer)));
+                var c = 0;
+                foreach (var m in Patch_UpdateProfiling.TargetMethods())
+                    try
+                    {
+                        c++;
+                        if (c % 100 == 0)
+                            Logger.LogInfo($"Added profile patch to {c} methods and counting");
+                        h.Patch(m, prefix: prefix, finalizer: final);
+                    } catch (Exception e)
+                    {
+                        Logger.LogError(e);
+                    }
+                Logger.LogInfo($"Applied {c} profiling patches");
+            }
+        }
+
+        bool appliedProfiling = false;
+
+        class SortProfile : IComparer<long>
+        {
+            int IComparer<long>.Compare(long x, long y)
+            {
+                var r = y.CompareTo(x);
+                return r == 0 ? 1 : r;
             }
         }
 
@@ -696,6 +779,72 @@ namespace Bugfixes
         }
     }
 
+    [HarmonyPatch(typeof(UIButtonProcessor),"Update")]
+    static class Patch_ButtonFind
+    {
+        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var code = instructions.ToList();
+            var ind = code.FindIndex(x => x.operand is MethodInfo m && m.Name == "Find" && m.DeclaringType == typeof(GameObject));
+            code.RemoveAt(ind);
+            code.InsertRange(ind, new[]
+            {
+                new CodeInstruction(OpCodes.Ldarg_0),
+                new CodeInstruction(OpCodes.Call,AccessTools.Method(typeof(Patch_ButtonFind),nameof(CachedFind)))
+            });
+            return code;
+        }
+        static ConditionalWeakTable<object, Dictionary<string, GameObject>> table = new ConditionalWeakTable<object, Dictionary<string, GameObject>>();
+        static GameObject CachedFind(string name, object self)
+        {
+            if (table.GetOrCreateValue(self).TryGetValue(name, out var go) && go)
+                return go;
+            return table.GetOrCreateValue(self)[name] = GameObject.Find(name);
+        }
+    }
+
+    [HarmonyPatch(typeof(KAUISelectMenu), "FinishMenuItems")]
+    static class Patch_PreventItemMenuLoad
+    {
+        static bool Prefix() => !SquadTactics.GameManager.pInstance;
+    }
+
+    static class Patch_UpdateProfiling
+    {
+        public static IEnumerable<MethodBase> TargetMethods()
+        {
+            var a = typeof(SanctuaryManager).Assembly;
+            foreach (var t in a.GetTypes())
+                if (!t.ContainsGenericParameters && t.Assembly == a)
+                    foreach (var m in t.GetMethods(~BindingFlags.Default))
+                        if (!m.ContainsGenericParameters && m.Name.Contains("Update") && m.IsDeclaredMember() && m.HasMethodBody() && m.DeclaringType == t)
+                            yield return m;
+            yield break;
+        }
+        public static Thread main;
+        public static Dictionary<MethodBase, (long, int)> recorded = new Dictionary<MethodBase, (long, int)>();
+        public static long total;
+        static List<long> stack = new List<long>(100);
+        public static void Prefix(out bool __state)
+        {
+            __state = false;
+            if (Thread.CurrentThread == main && (__state = Main.EnableLagSpikeProfiling))
+                stack.Add(DateTime.UtcNow.Ticks);
+        }
+        public static void Finalizer(bool __state, MethodBase __originalMethod)
+        {
+            if (!__state)
+                return;
+            var t = DateTime.UtcNow.Ticks - stack[stack.Count - 1];
+            stack.RemoveAt(stack.Count - 1);
+            for (int i = 0; i < stack.Count; i++)
+                stack[i] += t;
+            recorded.TryGetValue(__originalMethod, out var o);
+            recorded[__originalMethod] = (o.Item1 + t,o.Item2 + 1);
+            total += t;
+        }
+    }
+
     // Some debugging code. Used for logging various state switches along with a stacktrace
     /*[HarmonyPatch] // Logging some ui actions
     static class Patch_ChangeExclusive
@@ -830,6 +979,42 @@ namespace Bugfixes
             n.Append("\n");
             Main.GetDetailedString(new StackTrace(1, true), n);
             Debug.Log(n.ToString());
+        }
+    }
+
+    [HarmonyPatch(typeof(KAWidget), "SetUserData")]
+    static class Patch_SetWidgetData
+    {
+        static void Prefix(KAWidget __instance, KAWidgetUserData ud)
+        {
+            if (ud is KAUISelectItemData)
+            {
+                var n = new StringBuilder();
+                n.Append("SET WIDGET DATA:\n -- Widget: ");
+                n.Append(__instance.ToString());
+                n.Append("\n -- Data: ");
+                n.Append(ud);
+                n.Append("\n");
+                Main.GetDetailedString(new StackTrace(1, true), n);
+                Debug.Log(n.ToString());
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(KAUISelect), "Awake")]
+    static class Patch_CreateKAUISelect
+    {
+        static void Prefix(KAUISelect __instance)
+        {
+            if (__instance is UiBattleBackpack)
+            {
+                var n = new StringBuilder();
+                n.Append("SET WIDGET DATA:\n -- UI: ");
+                n.Append(__instance.ToString());
+                n.Append("\n");
+                Main.GetDetailedString(new StackTrace(1, true), n);
+                Debug.Log(n.ToString());
+            }
         }
     }*/
 }
