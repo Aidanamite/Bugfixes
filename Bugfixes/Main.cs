@@ -18,7 +18,7 @@ using System.Globalization;
 
 namespace Bugfixes
 {
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.9")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.10")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
     {
@@ -815,7 +815,19 @@ namespace Bugfixes
     [HarmonyPatch(typeof(KAUISelectMenu), "FinishMenuItems")]
     static class Patch_PreventItemMenuLoad
     {
-        static bool Prefix() => !SquadTactics.GameManager.pInstance;
+        public static bool BypassFix = false;
+        static bool Prefix() => !SquadTactics.GameManager.pInstance || BypassFix;
+    }
+
+    [HarmonyPatch(typeof(SquadTactics.UiEndDB), "SetRewards")]
+    static class Patch_DisplayEndResult
+    {
+        static void Postfix(UiBattleBackpack ___mBattleBackPack)
+        {
+            Patch_PreventItemMenuLoad.BypassFix = true;
+            ___mBattleBackPack.pKAUiSelectMenu.FinishMenuItems(false);
+            Patch_PreventItemMenuLoad.BypassFix = false;
+        }
     }
 
     // Allows limiting of the UI framerate based on the number of UI objects present. AllowUIUpdate is updated in Main.Update
