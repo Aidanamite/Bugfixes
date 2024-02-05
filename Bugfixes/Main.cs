@@ -18,7 +18,7 @@ using System.Globalization;
 
 namespace Bugfixes
 {
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.10")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.11")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
     {
@@ -811,7 +811,7 @@ namespace Bugfixes
         }
     }
 
-    // Fixes some FPS issues in Dragon Tactics caused the by the game loading the battle backpack for some unknown reason
+    // Fixes some FPS issues in Dragon Tactics caused the by the game loading the battle backpack early for some reason
     [HarmonyPatch(typeof(KAUISelectMenu), "FinishMenuItems")]
     static class Patch_PreventItemMenuLoad
     {
@@ -820,7 +820,7 @@ namespace Bugfixes
     }
 
     [HarmonyPatch(typeof(SquadTactics.UiEndDB), "SetRewards")]
-    static class Patch_DisplayEndResult
+    static class Patch_DisplayDTEndResult
     {
         static void Postfix(UiBattleBackpack ___mBattleBackPack)
         {
@@ -828,6 +828,13 @@ namespace Bugfixes
             ___mBattleBackPack.pKAUiSelectMenu.FinishMenuItems(false);
             Patch_PreventItemMenuLoad.BypassFix = false;
         }
+    }
+
+    // An attempt to fix a softlock issue with scout ship battle events
+    [HarmonyPatch(typeof(WorldEventManager), "InitEvent", typeof(string), typeof(string), typeof(string))]
+    static class Patch_TryStartEvent
+    {
+        static bool Prefix(WorldEventManager __instance, WorldEventManager.WorldEvent ___mWorldEvent) => !(__instance is WorldEventScoutAttack scout && ___mWorldEvent != null && ___mWorldEvent._State == WorldEventState.NONE);
     }
 
     // Allows limiting of the UI framerate based on the number of UI objects present. AllowUIUpdate is updated in Main.Update
