@@ -1,6 +1,4 @@
-﻿using BepInEx;
-using ConfigTweaks;
-using HarmonyLib;
+﻿using HarmonyLib;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -11,16 +9,35 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using UnityEngine;
 using System.Threading;
+using System.Globalization;
 using Object = UnityEngine.Object;
 using Debug = UnityEngine.Debug;
+
+
+#if DESKTOP
+using BepInEx;
+using ConfigTweaks;
 using System.Diagnostics;
-using System.Globalization;
+#elif MOBILE
+using MelonLoader;
+using MobileTools;
+using static UiWorldEventRewards;
+using UnhollowerBaseLib;
+using static MelonLoader.MelonLogger;
+
+[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.11", "Aidanamite")]
+[assembly: MelonAdditionalDependencies("MobileTools")]
+#endif
 
 namespace Bugfixes
 {
+#if DESKTOP
     [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.11")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
+#elif MOBILE
+    public class Main : MelonMod
+#endif
     {
         [ConfigField]
         public static KeyCode ForceInteractable = KeyCode.KeypadMultiply;
@@ -30,14 +47,17 @@ namespace Bugfixes
         public static bool DisplayDragonGender = true;
         [ConfigField]
         public static bool UIFrameThrottling = true;
+#if DESKTOP
         [ConfigField(Description = "DEV PURPOSES ONLY: This can take a long time to load (the game will be frozen during this time) and may have significant performance impact while active")]
         public static bool EnableLagSpikeProfiling = false;
         [ConfigField]
         public static long LagThreashold = 200000;
         [ConfigField]
         public static double LagDisplayThreashold = 0.5;
+#endif
 
-        public static BepInEx.Logging.ManualLogSource LogSource;
+#if DESKTOP
+        static BepInEx.Logging.ManualLogSource logger;
         bool TestPatchMethod() => false;
         static IEnumerable<CodeInstruction> TestPatch(IEnumerable<CodeInstruction> instructions) => new[] { new CodeInstruction(OpCodes.Ldc_I4_1), new CodeInstruction(OpCodes.Ret) };
         public void Awake()
@@ -69,11 +89,20 @@ namespace Bugfixes
                     Logger.LogError("\n\n==================================================================\n===============                                    ===============\n===============    PATCH FAILED WITH EXCEPTION!    ===============\n===============    the cause of this is unknown    ===============\n===============                                    ===============\n==================================================================\n");
                 }
             }
-            LogSource = Logger;
+            logger = Logger;
             new Harmony("com.aidanamite.Bugfixes").PatchAll();
-            Logger.LogInfo("Loaded");
+#elif MOBILE
+        static MelonLogger.Instance logger;
+        public override void OnInitializeMelon()
+        {
+            logger = LoggerInstance;
+            base.OnInitializeMelon();
+            HarmonyInstance.PatchAll();
+#endif
+            LogInfo("Loaded");
         }
 
+#if DESKTOP
         string errMsg;
 
         public void OnDestroy()
@@ -81,18 +110,26 @@ namespace Bugfixes
             // Fixes a bug where trying to close the game would simply make it stop responding
             Process.GetCurrentProcess().Kill();
         }
+#endif
 
         public static bool AllowUIUpdate = true;
         int updateStep;
+#if DESKTOP
         public void Update()
         {
+#elif MOBILE
+        public override void OnUpdate()
+        {
+            base.OnUpdate();
+#endif
+            updateStep = (updateStep + 1) % ((int)(Patch_Widget.count * 11L / 80000) + 1);
+            AllowUIUpdate = !UIFrameThrottling || updateStep == 0;
+
+#if DESKTOP
             if (Input.GetKeyDown(ForceInteractable)) // A workaround for UIs not being interactable when they should've been. Sometimes there's still issues after getting out of the UI
                 foreach (var i in FindObjectsOfType<KAUI>())
                     if (i.GetVisibility())
                         i.SetInteractive(true);
-
-            updateStep = (updateStep + 1) % ((int)(Patch_Widget.count * 11L / 80000) + 1);
-            AllowUIUpdate = !UIFrameThrottling || updateStep == 0;
 
             if (errMsg != null && UiLogin.pInstance)
             {
@@ -273,23 +310,32 @@ namespace Bugfixes
                 s.Append(f.GetFileColumnNumber());
                 s.Append(">");
             }
+#endif
         }
+
+#if DESKTOP
+        public static void LogInfo(object msg) => logger.LogInfo(msg);
+#elif MOBILE
+        public static void LogInfo(object msg) => logger.Msg(msg);
+#endif
     }
 
     static class ExtentionMethods
     {
         public static KAWidget GetEmptyIncubatorSlot(this UiHatchingSlotsMenu menu)
         {
-            List<KAWidget> items = menu.GetItems();
+            var items = menu.GetItems();
             if (items != null && items.Count > 0)
                 for (int i = 0; i < items.Count; i++)
                 {
-                    var widget = (IncubatorWidgetData)items[i].GetUserData();
+                    var widget = (IncubatorWidgetData)items.get_Item(i).GetUserData();
                     if (widget != null && widget.Incubator)
                     {
+#if DESKTOP
                         Debug.Log($"Incubator {widget.Incubator} is in state {widget.Incubator.pMyState}");
+#endif
                         if (widget.Incubator.pMyState <= Incubator.IncubatorStates.IDLE)
-                            return items[i];
+                            return items.get_Item(i);
                     }
                 }
             return null;
@@ -303,6 +349,8 @@ namespace Bugfixes
             else
                 return "{DESTROYED}";
         }
+
+#if DESKTOP
         public static string GetOperandString(this object obj, List<CodeInstruction> code = null) => obj == null ? "" : $"{(obj is Label l ? code == null ? -2 : code.FindIndex(y => y.labels != null && y.labels.Contains(l)) : obj is MemberInfo m && m.DeclaringType != null ? m.DeclaringType.FullName + "::" + m : obj)} [{obj.GetType().FullName}]";
 
         static FieldInfo _locals = typeof(ILGenerator).GetField("locals", ~BindingFlags.Default);
@@ -320,52 +368,29 @@ namespace Bugfixes
 
         static MethodInfo _pGamePlayTime = typeof(SquadTactics.GameManager).GetProperty("pGamePlayTime", ~BindingFlags.Default).GetSetMethod(true);
         public static void SetGamePlayTime(this SquadTactics.GameManager manager, float value) => _pGamePlayTime.Invoke(manager,new object[] { value });
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static T get_Item<T>(this List<T> l, int index) => l[index];
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool Is<T>(this object obj) => obj is T;
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool Is<T>(this object obj,out T nObj)
+        {
+            if (obj is T n)
+            {
+                nObj = n;
+                return true;
+            }
+            nObj = default;
+            return false;
+        }
+#elif MOBILE
+        public static (LocaleString, Gender) ToTarget(this RaisedPetData data) => data == null ? default : (SanctuaryData.FindSanctuaryPetTypeInfo(data.PetTypeID)._NameText, data.Gender);
+        public static (LocaleString, Gender) ToTarget(this HeroPetData data) => data == null ? default : (SanctuaryData.FindSanctuaryPetTypeInfo(data._TypeID)._NameText, data._Gender);
+#endif
     }
 
-    // Fixes a bug where the server would double send a mission complete message that causes an error that softlocks the game
-    [HarmonyPatch(typeof(MissionManager), "MissionCompleteCallback")] 
-    static class Patch_MissionComplete
-    {
-        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            var code = instructions.ToList();
-            for (int i = code.Count - 1; i >= 0; i--)
-                if (code[i].operand is MethodInfo m && m.DeclaringType.IsConstructedGenericType && m.Name == "Add" && typeof(Dictionary<,>) == m.DeclaringType.GetGenericTypeDefinition())
-                    code[i].operand = AccessTools.Method(m.DeclaringType, "set_Item");
-            return code;
-        }
-    }
-
-    // An attempt to fix certain music being treated like general sound effects
-    [HarmonyPatch] 
-    static class Patch_SoundGroup
-    {
-        static HashSet<(string, PoolGroup)> found = new HashSet<(string, PoolGroup)>();
-        static IEnumerable<MethodBase> TargetMethods()
-        {
-            yield return AccessTools.Method(typeof(SnChannel), "ApplySettings");
-            yield return AccessTools.Method(typeof(SnChannel), "AddChannel", new[] { typeof(SnChannel) });
-            yield return AccessTools.Method(typeof(SnChannel), "SetVolumeForPoolGroup");
-            yield return AccessTools.Method(typeof(SnChannel), "TurnOffPools");
-        }
-        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            var code = instructions.ToList();
-            for (int i = code.Count - 1; i >= 0; i--)
-                if (code[i].opcode == OpCodes.Ldfld && code[i].operand is FieldInfo f && f.Name == "_Group")
-                    code.Insert(i, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(Patch_SoundGroup), nameof(CheckGroup))));
-            return code;
-        }
-        static PoolInfo CheckGroup(PoolInfo instance)
-        {
-            if (instance._Name == "AmbSFX_Pool")
-                instance._Group = PoolGroup.MUSIC;
-            //if (found.Add((instance._Name, instance._Group)))
-                //Main.LogSource.LogInfo($"Pool info {instance._Group} \"{instance._Name}\"");
-            return instance;
-        }
-    }
-
+#if DESKTOP
     // Some extra logging to try and figure out the cause of the "accept mission" ui sometimes not becomming interactable and softlocking the game
     [HarmonyPatch(typeof(UtDebug), "LogWarning",typeof(object),typeof(int))] 
     static class Patch_LogWarning
@@ -382,12 +407,13 @@ namespace Bugfixes
             }
         }
     }
+#endif
 
     // Fixes a bug where certain objects had a null/destroyed path object which would cause the entire pathing to fail and the object to not move at all
     [HarmonyPatch] 
     static class Patch_SplineFix
     {
-        static MethodBase TargetMethod() => typeof(NPCSplineMove).GetMethods(~BindingFlags.Default).First(x => x.Name.StartsWith("<StartMove>"));
+        static MethodBase TargetMethod() => typeof(NPCSplineMove).GetMethods(~BindingFlags.Default).First(x => x.Name.Contains("StartMove") && x.Name != "StartMove");
         static bool Prefix(NPCSplineMove __instance,ref bool __result)
         {
             if (!__instance.pathContainer)
@@ -399,10 +425,67 @@ namespace Bugfixes
         }
     }
 
+    // Fixes a bug where the server would double send a mission complete message that causes an error that softlocks the game
+    [HarmonyPatch(typeof(MissionManager), "MissionCompleteCallback")]
+    static class Patch_MissionComplete
+    {
+#if DESKTOP
+        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var code = instructions.ToList();
+            for (int i = code.Count - 1; i >= 0; i--)
+                if (code[i].operand is MethodInfo m && m.DeclaringType.IsConstructedGenericType && m.Name == "Add" && typeof(Dictionary<,>) == m.DeclaringType.GetGenericTypeDefinition())
+                    code[i].operand = AccessTools.Method(m.DeclaringType, "set_Item");
+            return code;
+        }
+#elif MOBILE
+        static Exception Finalizer(Exception __exception) => __exception is ArgumentException ? null : __exception;
+#endif
+    }
+
+    // An attempt to fix certain music being treated like general sound effects
+    [HarmonyPatch]
+    static class Patch_SoundGroup
+    {
+        //static HashSet<(string, PoolGroup)> found = new HashSet<(string, PoolGroup)>();
+        static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(SnChannel), "ApplySettings");
+            yield return AccessTools.Method(typeof(SnChannel), "AddChannel", new[] { typeof(SnChannel) });
+            yield return AccessTools.Method(typeof(SnChannel), "SetVolumeForPoolGroup");
+            yield return AccessTools.Method(typeof(SnChannel), "TurnOffPools");
+        }
+#if DESKTOP
+        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var code = instructions.ToList();
+            for (int i = code.Count - 1; i >= 0; i--)
+                if (code[i].opcode == OpCodes.Ldfld && code[i].operand is FieldInfo f && f.Name == "_Group")
+                    code.Insert(i, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(Patch_SoundGroup), nameof(CheckGroup))));
+            return code;
+        }
+#elif MOBILE
+        static void Prefix()
+        {
+            foreach (var pool in SnChannel.mTurnedOffPools)
+                CheckGroup(pool);
+        }
+#endif
+        static PoolInfo CheckGroup(PoolInfo instance)
+        {
+            if (instance._Name == "AmbSFX_Pool")
+                instance._Group = PoolGroup.MUSIC;
+            //if (found.Add((instance._Name, instance._Group)))
+            //Main.LogSource.LogInfo($"Pool info {instance._Group} \"{instance._Name}\"");
+            return instance;
+        }
+    }
+
     // Fixes a bug where putting an egg into the hatchery *after* completing a tutorial in the same area would cause a UI bug
     [HarmonyPatch(typeof(Incubator), "CheckEggSelected")] 
     static class Patch_CheckEggSelected
     {
+#if DESKTOP
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
             var code = instructions.ToList();
@@ -414,12 +497,20 @@ namespace Bugfixes
             return code;
         }
         static bool CheckDestroyed(GameObject obj) => obj;
+#elif MOBILE
+        static void Prefix()
+        {
+            if ((object)InteractiveTutManager._CurrentActiveTutorialObject != null && InteractiveTutManager._CurrentActiveTutorialObject == null)
+                InteractiveTutManager._CurrentActiveTutorialObject = null;
+        }
+#endif
     }
 
     // Fixes a bug with some mission reward popups softlocking the game
     [HarmonyPatch(typeof(RewardWidget), "AddRewardItem")] 
     static class Patch_AddRewards
     {
+#if DESKTOP
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
             var code = instructions.ToList();
@@ -427,23 +518,20 @@ namespace Bugfixes
             return code;
         }
         static Vector2 GetItemSafe(Vector2[] array, int index) => array.Length > index ? array[index] : default;
-    }
-
-    // An attempt to fix a bug where putting an egg into the hatchery would cause a UI bug. This did not work but for now the bug has stopped occuring so further diagnosis is difficult
-    /*[HarmonyPatch(typeof(UiHatchingSlotsMenu), "OnEggPlaced")] 
-    static class Patch_HatchingUIAddEgg
-    {
-        static void Prefix(UiHatchingSlotsMenu __instance, ref KAWidget ___mInteractingWidget)
+#elif MOBILE
+        static void Prefix(RewardWidget __instance, RewardWidget.RewardPositionsData inRewardPositionData)
         {
-            if (!___mInteractingWidget && !(___mInteractingWidget = __instance.GetEmptyIncubatorSlot()))
-                Debug.LogError("Failed to fix target slot (UiHatchingSlotsMenu::OnEggPlaced)");
+            if (__instance.mAddRewardCallIndex >= inRewardPositionData._Positions.Length)
+                Il2CppSystem.Array.Resize(inRewardPositionData._Positions, __instance.mAddRewardCallIndex + 1);
         }
-    }*/
+#endif
+    }
 
     // Fixes a bug where the dragon age up pop up could open on top of another ui
     [HarmonyPatch(typeof(ObProximityHatch), "Update")] 
     static class Patch_GrowUI
     {
+#if DESKTOP
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
             var code = instructions.ToList();
@@ -457,22 +545,70 @@ namespace Bugfixes
             });
             return code;
         }
-
+        static SanctuaryPet CheckOpenAgeUpUI(SanctuaryPet original, ObProximityHatch instance) => (!Main.FixGrowthUI || (UINotBlocked && memory.GetOrCreateValue(instance).lifetime > 5)) ? original : null;
         static ConditionalWeakTable<ObProximityHatch, Memory> memory = new ConditionalWeakTable<ObProximityHatch, Memory>();
-        static SanctuaryPet CheckOpenAgeUpUI(SanctuaryPet original, ObProximityHatch instance) => !Main.FixGrowthUI || (AvAvatar.pInputEnabled && AvAvatar.pState != AvAvatarState.PAUSED && AvAvatar.pState != AvAvatarState.NONE && memory.GetOrCreateValue(instance).lifetime > 5) ? original : null;
         static void CheckTime(ObProximityHatch instance)
-        { // Still needs testing
-            if (AvAvatar.pInputEnabled && AvAvatar.pState != AvAvatarState.PAUSED && AvAvatar.pState != AvAvatarState.NONE)
+        {
+            if (UINotBlocked)
                 memory.GetOrCreateValue(instance).lifetime += Time.deltaTime;
         }
         class Memory
         {
             public float lifetime;
         }
+#elif MOBILE
+        static bool Prefix(ObProximityHatch __instance)
+        {
+            if (UINotBlocked)
+            {
+                var memory = __instance.GetComponent<Memory>();
+                if (!memory)
+                    memory = __instance.gameObject.AddComponent<Memory>();
+                memory.lifetime += Time.deltaTime;
+                return !Main.FixGrowthUI || memory.lifetime > 5;
+            }
+            return true;
+        }
+        [RegisterTypeInIl2Cpp]
+        public class Memory : MonoBehaviour
+        {
+            public Memory(IntPtr ptr) : base(ptr) {}
+            public float lifetime;
+        }
+#endif
+
+        static bool UINotBlocked => AvAvatar.pInputEnabled && AvAvatar.pState != AvAvatarState.PAUSED && AvAvatar.pState != AvAvatarState.NONE;
     }
 
+    // Fixes a bug where the npc quest dialog will sometimes never become interactable. While not ideal, it currently works by stopping it being disabled in the first place
+    [HarmonyPatch(typeof(UiNPCQuestDetails), "SetupDetailsUi")]
+    static class Patch_SetupQuestUI
+    {
+#if DESKTOP
+        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var code = instructions.ToList();
+            code[code.FindLastIndex(x => x.operand is MethodInfo m && m.Name == "SetState") - 1].opcode = OpCodes.Ldc_I4_0;
+            return code;
+        }
+#elif MOBILE
+        static void Postfix(UiNPCQuestDetails __instance) => __instance.SetState(KAUIState.INTERACTIVE);
+#endif
+    }
+
+    // An attempt to fix a bug where putting an egg into the hatchery would cause a UI bug. This did not work but for now the bug has stopped occuring so further diagnosis is difficult
+    /*[HarmonyPatch(typeof(UiHatchingSlotsMenu), "OnEggPlaced")] 
+    static class Patch_HatchingUIAddEgg
+    {
+        static void Prefix(UiHatchingSlotsMenu __instance, ref KAWidget ___mInteractingWidget)
+        {
+            if (!___mInteractingWidget && !(___mInteractingWidget = __instance.GetEmptyIncubatorSlot()))
+                Debug.LogError("Failed to fix target slot (UiHatchingSlotsMenu::OnEggPlaced)");
+        }
+    }*/
 
     // Fixes a bug with the age up prompt where the player's control would not be restored when closing the ui
+#if DESKTOP
     [HarmonyPatch(typeof(DragonAgeUpConfig), "ShowAgeUpUI", typeof(DragonAgeUpConfig.OnDragonAgeUpDone), typeof(RaisedPetStage), typeof(RaisedPetData), typeof(RaisedPetStage[]), typeof(bool), typeof(bool), typeof(GameObject), typeof(string))]
     static class Patch_ShowAgeUpUI_SimpleToComplex
     {
@@ -480,25 +616,35 @@ namespace Bugfixes
         {
             if (inOnDoneCallback != null)
             {
-                DragonAgeUpConfig.ShowAgeUpUI(() => inOnDoneCallback(), inOnDoneCallback, () => inOnDoneCallback(), fromStage, inData, requiredStages, ageUpDone, isUnmountableAllowed, messageObj, assetName);
+                DragonAgeUpConfig.ShowAgeUpUI(inOnDoneCallback.Invoke, inOnDoneCallback, inOnDoneCallback.Invoke, fromStage, inData, requiredStages, ageUpDone, isUnmountableAllowed, messageObj, assetName);
+#elif MOBILE
+    [HarmonyPatch(typeof(DragonAgeUpConfig), "ShowAgeUpUI", typeof(DragonAgeUpConfig.OnDragonAgeUpDone), typeof(RaisedPetStage), typeof(RaisedPetData), typeof(Il2CppStructArray<RaisedPetStage>), typeof(bool), typeof(bool), typeof(GameObject), typeof(string))]
+    static class Patch_ShowAgeUpUI_SimpleToComplex
+    {
+        static bool Prefix(DragonAgeUpConfig.OnDragonAgeUpDone inOnDoneCallback, RaisedPetStage fromStage, RaisedPetData inData, Il2CppStructArray<RaisedPetStage> requiredStages, bool ageUpDone, bool isUnmountableAllowed, GameObject messageObj, string assetName)
+        {
+            if (inOnDoneCallback != null)
+            {
+                DragonAgeUpConfig.ShowAgeUpUI(AgeUpCancelConverter.ConvertAction(inOnDoneCallback.Invoke), inOnDoneCallback, AgeUpBuyConverter.ConvertAction(inOnDoneCallback.Invoke), fromStage, inData, requiredStages, ageUpDone, isUnmountableAllowed, messageObj, assetName);
+#endif
                 return false;
             }
             return true;
         }
     }
 
-    // Fixes a bug where the npc quest dialog will sometimes never become interactable. While not ideal, it currently works by stopping it being disabled in the first place
-    [HarmonyPatch(typeof(UiNPCQuestDetails), "SetupDetailsUi")]
-    static class Patch_SetupQuestUI
+#if MOBILE
+    public class AgeUpCancelConverter : DelegateConverter<Action, DragonAgeUpConfig.OnDragonAgeUpCancel, AgeUpCancelConverter>
     {
-        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            var code = instructions.ToList();
-            code[code.FindLastIndex(x => x.operand is MethodInfo m && m.Name == "SetState") - 1].opcode = OpCodes.Ldc_I4_0;
-            return code;
-        }
+        void Invoke() => Delegate.Invoke();
     }
+    public class AgeUpBuyConverter : DelegateConverter<Action, DragonAgeUpConfig.OnDragonAgeUpBuy, AgeUpBuyConverter>
+    {
+        void Invoke() => Delegate.Invoke();
+    }
+#endif
 
+#if DESKTOP
     // Main component of enabling the dragon's gender to be displayed next to it's species. This adds a call to the TryReplace function just after loading the _NameText value along with the pet instance being displayed
     [HarmonyPatch]
     static class Patch_DisplayDragonGender
@@ -704,11 +850,200 @@ namespace Bugfixes
 
         }
     }
+#elif MOBILE
+    // Adds the dragon gender display for several non-static methods
+    [HarmonyPatch]
+    static class Patch_DisplayDragonGender_NonStatic
+    {
+        static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(KAUISelectDragonMenu), "SelectItem");
+            yield return AccessTools.Method(typeof(KAUISelectDragonMenu), "GetGlowFailFormatText");
+            yield return AccessTools.Method(typeof(UiChooseADragon), "SetPlayerDragonData");
+            yield return AccessTools.Method(typeof(UiDragonCustomization), "RefreshUI");
+            yield return AccessTools.Method(typeof(UiDragonCustomization), "ShowDragonStats");
+            yield return AccessTools.Method(typeof(UiDragonsAgeUpMenuItem), "SetupWidget");
+            yield return AccessTools.Method(typeof(UiDragonsInfoCardItem), "RefreshUI");
+            yield return AccessTools.Method(typeof(UiDragonsListCardMenu), "LoadDragonsList");
+            yield return AccessTools.Method(typeof(UiMessageInfoUserData), "ReplaceTagWithPetData");
+            yield return AccessTools.Method(typeof(UiMOBASelectDragon), "SetPlayerDragonData");
+            yield return AccessTools.Method(typeof(UiSelectHeroDragons), "SetPlayerDragonData");
+            yield return AccessTools.Method(typeof(UiStableQuestDragonSelect), "RefreshUIWidgets");
+            yield break;
+        }
+        static void Prefix(Il2CppSystem.Object __instance)
+        {
+            if (Main.DisplayDragonGender)
+            {
+                if (__instance.Is<KAUISelectDragonMenu>(out var sdm))
+                    Patch_GetLocalizedString.Target = sdm.mUiSelectDragon.mPetData.ToTarget();
+                else if (__instance.Is<UiChooseADragon>() || __instance.Is<UiMOBASelectDragon>() || __instance.Is<UiSelectHeroDragons>())
+                    Patch_GetLocalizedString.Target = SanctuaryManager.pCurPetInstance.pData.ToTarget();
+                else if (__instance.Is<UiDragonCustomization>(out var dc))
+                    Patch_GetLocalizedString.Target = dc.mPetData.ToTarget();
+                else if (__instance.Is<UiDragonsAgeUpMenuItem>(out var aumi))
+                {
+                    var data = (AgeUpUserData)aumi.GetUserData();
+                    Patch_GetLocalizedString.Target = data.pData.ToTarget();
+                }
+                else if (__instance.Is<UiDragonsInfoCardItem>(out var dici))
+                    Patch_GetLocalizedString.Target = dici.mSelectedPetData.ToTarget();
+                else if (__instance.Is<UiDragonsListCardMenu>(out var dlcm))
+                {
+                    Patch_GetLocalizedString.ClearTargets();
+                    foreach (var array in RaisedPetData.pActivePets.Values)
+                        foreach (var data in array)
+                            if (
+                                    (SanctuaryManager.pCurPetInstance == null
+                                    || SanctuaryManager.pCurPetInstance.pData == null
+                                    || data.RaisedPetID != SanctuaryManager.pCurPetInstance.pData.RaisedPetID)
+                                && data.pStage >= RaisedPetStage.BABY
+                                && data.IsPetCustomized())
+                            {
+                                if (dlcm._UiDragonsListCard.pCurrentMode == UiDragonsListCard.Mode.NestedDragons || dlcm._UiDragonsListCard.pCurrentMode == UiDragonsListCard.Mode.ForceDragonSelection)
+                                {
+                                    if (StableData.GetByPetID(data.RaisedPetID) == null)
+                                        continue;
+                                }
+                                else if (dlcm._UiDragonsListCard.pCurrentMode == UiDragonsListCard.Mode.CurrentStableDragons)
+                                {
+                                    if (StableData.GetByPetID(data.RaisedPetID)?.ID != StableManager.pCurrentStableID)
+                                        continue;
+                                }
+                                Patch_GetLocalizedString.AddTarget(data.ToTarget());
+                            }
+                }
+                else if (__instance.Is<UiMessageInfoUserData>(out var miud))
+                {
+                    var reward = string.IsNullOrEmpty(miud.mMessageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(miud.mMessageInfo.Data, typeof(RewardData).ToIl2Cpp()) as RewardData);
+                    var entity = reward != null && !string.IsNullOrEmpty(reward.EntityID) ? RaisedPetData.GetByEntityID(new NullableStruct<Il2CppSystem.Guid>(new Il2CppSystem.Guid(reward.EntityID))) : null;
+                    if (entity != null)
+                        Patch_GetLocalizedString.Target = entity.ToTarget();
+                }
+                else if (__instance.Is<UiStableQuestDragonSelect>(out var sqds))
+                    Patch_GetLocalizedString.Target = sqds.mCurrentPetUserData.pData.ToTarget();
+            }
+        }
+        static void Finalizer()
+        {
+            Patch_GetLocalizedString.ClearTargets();
+        }
+    }
+    [HarmonyPatch]
+    static class Patch_DisplayDragonGender_ArgumentsPrefixes
+    {
+        [HarmonyPatch(typeof(JSGames.UI.Util.UIUtil), "ReplaceTagWithPetData")]
+        [HarmonyPrefix]
+        static void ReplaceTagWithPetData(RewardData inRewardData)
+        {
+            if (Main.DisplayDragonGender)
+            {
+                var entity = inRewardData != null && !string.IsNullOrEmpty(inRewardData.EntityID) ? RaisedPetData.GetByEntityID(new NullableStruct<Il2CppSystem.Guid>(new Il2CppSystem.Guid(inRewardData.EntityID))) : null;
+                if (entity != null)
+                    Patch_GetLocalizedString.Target = entity.ToTarget();
+            }
+        }
+        [HarmonyPatch(typeof(UiDragonsListCard), "SetSelectedDragonItem")]
+        [HarmonyPrefix]
+        static void SetSelectedDragonItem(RaisedPetData pData)
+        {
+            if (Main.DisplayDragonGender)
+                Patch_GetLocalizedString.Target = pData.ToTarget();
+        }
+        [HarmonyPatch(typeof(UiSelectHeroDragons), "AddDragonDetails")]
+        [HarmonyPrefix]
+        static void AddDragonDetails(HeroPetData hpData)
+        {
+            if (Main.DisplayDragonGender)
+                Patch_GetLocalizedString.Target = hpData.ToTarget();
+        }
+        [HarmonyPatch(typeof(UiStableQuestCompleteMenu), "PopulateItems")]
+        [HarmonyPrefix]
+        static void PopulateItems(TimedMissionSlotData slotData)
+        {
+            if (Main.DisplayDragonGender)
+            {
+                Patch_GetLocalizedString.ClearTargets();
+                for (int i = 0; i < slotData.PetIDs.Count; i++)
+                {
+                    RaisedPetData byID = RaisedPetData.GetByID(slotData.PetIDs.get_Item(i));
+                    if (byID != null)
+                        Patch_GetLocalizedString.AddTarget(byID.ToTarget());
+                }
+            }
+        }
+        [HarmonyPatch(typeof(WsUserMessage), "ShowSystemMessage")]
+        [HarmonyPrefix]
+        static void ShowSystemMessage(MessageInfo messageInfo)
+        {
+            if (Main.DisplayDragonGender)
+            {
+                var reward = string.IsNullOrEmpty(messageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(messageInfo.Data, typeof(RewardData).ToIl2Cpp()) as RewardData);
+                var entity = reward != null && !string.IsNullOrEmpty(reward.EntityID) ? RaisedPetData.GetByEntityID(new NullableStruct<Il2CppSystem.Guid>(new Il2CppSystem.Guid(reward.EntityID))) : null;
+                if (entity != null)
+                    Patch_GetLocalizedString.Target = entity.ToTarget();
+            }
+        }
+    }
+    [HarmonyPatch]
+    static class Patch_DisplayDragonGender_ArgumentsFinalizers
+    {
+        static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(JSGames.UI.Util.UIUtil), "ReplaceTagWithPetData");
+            yield return AccessTools.Method(typeof(UiDragonsListCard), "SetSelectedDragonItem");
+            yield return AccessTools.Method(typeof(UiSelectHeroDragons), "AddDragonDetails");
+            yield return AccessTools.Method(typeof(UiStableQuestCompleteMenu), "PopulateItems");
+            yield return AccessTools.Method(typeof(WsUserMessage), "ShowSystemMessage");
+            yield break;
+        }
+        static void Finalizer()
+        {
+            Patch_GetLocalizedString.ClearTargets();
+        }
+    }
+
+    // Prefixes the string with the gender
+    [HarmonyPatch(typeof(LocaleString), "GetLocalizedString")]
+    static class Patch_GetLocalizedString
+    {
+        static int Pos;
+        static List<(LocaleString Target, Gender Gender)> Targets = new();
+        public static (LocaleString Target, Gender Gender) Target
+        {
+            set
+            {
+                ClearTargets();
+                AddTarget(value);
+            }
+        }
+        public static void ClearTargets()
+        {
+            Targets.Clear();
+            Pos = 0;
+        }
+        public static void AddTarget((LocaleString Target, Gender Gender) Target)
+        {
+            if (Target.Target != null)
+                Targets.Add(Target);
+        }
+        static void Postfix(LocaleString __instance, ref string __result)
+        {
+            if (Targets.Count != 0 && __instance._ID == Targets[Pos].Target._ID && __instance._Text == Targets[Pos].Target._Text)
+            {
+                __result = Targets[Pos].Gender + " " + __result;
+                Pos = (Pos + 1) % Targets.Count;
+            }
+
+        }
+    }
+#endif
 
     // Makes the UI update when changing the dragon's gender so that the gender display in the hatching UI doesn't just say "Male" the whole time
     [HarmonyPatch(typeof(UiDragonCustomization),"OnClick")]
     static class Patch_UpdateCustomization
     {
+#if DESKTOP
         static void Postfix(UiDragonCustomization __instance, KAWidget inItem, ref bool ___mUiRefresh, KAToggleButton ___mToggleBtnFemale, KAToggleButton ___mToggleBtnMale, bool ___mDragonMale)
         {
             if (Main.DisplayDragonGender && (inItem == ___mToggleBtnMale || inItem == ___mToggleBtnFemale))
@@ -717,6 +1052,16 @@ namespace Bugfixes
                 ___mUiRefresh = true;
             }
         }
+#elif MOBILE
+        static void Postfix(UiDragonCustomization __instance, KAWidget inItem)
+        {
+            if (Main.DisplayDragonGender && (inItem == __instance.mToggleBtnMale || inItem == __instance.mToggleBtnFemale))
+            {
+                __instance.pPetData.Gender = __instance.mDragonMale ? Gender.Male : Gender.Female;
+                __instance.mUiRefresh = true;
+            }
+        }
+#endif
     }
 
     // Used by the dragon gender display in situations where a set of IL instructions could not be found to append the current pet to the stack.
@@ -740,8 +1085,12 @@ namespace Bugfixes
     {
         static void Postfix(KAUISelectDragon __instance)
         {
-            if (__instance is UiDragonCustomization ui)
+            if (__instance.Is < UiDragonCustomization>(out var ui))
+#if DESKTOP
                 ui.IsMale(ui.pPetData.Gender == Gender.Male);
+#elif MOBILE
+                ui.mDragonMale = ui.pPetData.Gender == Gender.Male;
+#endif
         }
     }
 
@@ -749,6 +1098,7 @@ namespace Bugfixes
     [HarmonyPatch(typeof(UiDragonCustomization), "Initialize")]
     static class Patch_InitDragonCustomization
     {
+#if DESKTOP
         static void Postfix(UiDragonCustomization __instance, KAToggleButton ___mToggleBtnFemale, KAToggleButton ___mToggleBtnMale)
         {
             if (___mToggleBtnMale)
@@ -762,6 +1112,21 @@ namespace Bugfixes
                 ___mToggleBtnFemale.SetStartChecked(!__instance.IsMale());
             }
         }
+#elif MOBILE
+        static void Postfix(UiDragonCustomization __instance)
+        {
+            if (__instance.mToggleBtnMale)
+            {
+                __instance.mToggleBtnMale.SetChecked(__instance.mDragonMale);
+                __instance.mToggleBtnMale._StartChecked = __instance.mDragonMale;
+            }
+            if (__instance.mToggleBtnFemale)
+            {
+                __instance.mToggleBtnFemale.SetChecked(!__instance.mDragonMale);
+                __instance.mToggleBtnFemale._StartChecked = !__instance.mDragonMale;
+            }
+        }
+#endif
     }
 
     // Fixes a bug where you could click on battle objects underneath UI buttons sometimes causing unintended actions
@@ -781,12 +1146,17 @@ namespace Bugfixes
             else
                 return true;
             if (__instance._GameState != SquadTactics.GameManager.GameState.GAMEOVER)
+#if DESKTOP
                 __instance.SetGamePlayTime(__instance.pGamePlayTime + Time.deltaTime);
+#elif MOBILE
+                __instance.pGamePlayTime = __instance.pGamePlayTime + Time.deltaTime;
+#endif
             return false;
         }
     }
 
     // Fixes some FPS issues in Dragon Tactics caused by use of GameObject.Find
+#if DESKTOP
     [HarmonyPatch(typeof(UIButtonProcessor),"Update")]
     static class Patch_ButtonFind
     {
@@ -810,6 +1180,27 @@ namespace Bugfixes
             return table.GetOrCreateValue(self)[name] = GameObject.Find(name);
         }
     }
+#elif MOBILE
+    [HarmonyPatch(typeof(GameObject), "Find")]
+    static class Patch_FindGameObject
+    {
+        public static Dictionary<string,GameObject> found = new();
+        static bool Prefix(string name, ref GameObject __result)
+        {
+            if (found.TryGetValue(name, out var go) && go)
+            {
+                __result = go;
+                return false;
+            }
+            return true;
+        }
+        static void Postfix(string name, GameObject __result)
+        {
+            if (__result)
+                found[name] = __result;
+        }
+    }
+#endif
 
     // Fixes some FPS issues in Dragon Tactics caused the by the game loading the battle backpack early for some reason
     [HarmonyPatch(typeof(KAUISelectMenu), "FinishMenuItems")]
@@ -822,19 +1213,32 @@ namespace Bugfixes
     [HarmonyPatch(typeof(SquadTactics.UiEndDB), "SetRewards")]
     static class Patch_DisplayDTEndResult
     {
+#if DESKTOP
         static void Postfix(UiBattleBackpack ___mBattleBackPack)
         {
             Patch_PreventItemMenuLoad.BypassFix = true;
             ___mBattleBackPack.pKAUiSelectMenu.FinishMenuItems(false);
             Patch_PreventItemMenuLoad.BypassFix = false;
         }
+#elif MOBILE
+        static void Postfix(SquadTactics.UiEndDB __instance)
+        {
+            Patch_PreventItemMenuLoad.BypassFix = true;
+            __instance.mBattleBackPack.pKAUiSelectMenu.FinishMenuItems(false);
+            Patch_PreventItemMenuLoad.BypassFix = false;
+        }
+#endif
     }
 
     // An attempt to fix a softlock issue with scout ship battle events
     [HarmonyPatch(typeof(WorldEventManager), "InitEvent", typeof(string), typeof(string), typeof(string))]
     static class Patch_TryStartEvent
     {
+#if DESKTOP
         static bool Prefix(WorldEventManager __instance, WorldEventManager.WorldEvent ___mWorldEvent) => !(__instance is WorldEventScoutAttack scout && ___mWorldEvent != null && ___mWorldEvent._State == WorldEventState.NONE);
+#elif MOBILE
+        static bool Prefix(WorldEventManager __instance) => !(__instance.Is<WorldEventScoutAttack>(out var scout) && __instance.mWorldEvent != null && __instance.mWorldEvent._State == WorldEventState.NONE);
+#endif
     }
 
     // Allows limiting of the UI framerate based on the number of UI objects present. AllowUIUpdate is updated in Main.Update
@@ -853,6 +1257,7 @@ namespace Bugfixes
         static bool Update() => Main.AllowUIUpdate;
     }
 
+#if DESKTOP
     static class Patch_UpdateProfiling
     {
         public static IEnumerable<MethodBase> TargetMethods()
@@ -888,6 +1293,7 @@ namespace Bugfixes
             total += t;
         }
     }
+#endif
 
     // Some debugging code. Used for logging various state switches along with a stacktrace
     /*[HarmonyPatch] // Logging some ui actions

@@ -7,14 +7,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Bugfixes", "Bugfixes\Bugfix
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
+		Desktop|Any CPU = Desktop|Any CPU
+		Mobile|Any CPU = Mobile|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Desktop|Any CPU.ActiveCfg = Desktop|Any CPU
+		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Desktop|Any CPU.Build.0 = Desktop|Any CPU
+		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Mobile|Any CPU.ActiveCfg = Mobile|Any CPU
+		{5AE1C738-1B8C-4A06-9E26-079429415D82}.Mobile|Any CPU.Build.0 = Mobile|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
