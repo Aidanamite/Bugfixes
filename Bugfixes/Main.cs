@@ -25,14 +25,14 @@ using static UiWorldEventRewards;
 using UnhollowerBaseLib;
 using static MelonLoader.MelonLogger;
 
-[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.11", "Aidanamite")]
+[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.13", "Aidanamite")]
 [assembly: MelonAdditionalDependencies("MobileTools")]
 #endif
 
 namespace Bugfixes
 {
 #if DESKTOP
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.11")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.13")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
 #elif MOBILE
@@ -1235,9 +1235,9 @@ namespace Bugfixes
     static class Patch_TryStartEvent
     {
 #if DESKTOP
-        static bool Prefix(WorldEventManager __instance, WorldEventManager.WorldEvent ___mWorldEvent) => !(__instance is WorldEventScoutAttack scout && ___mWorldEvent != null && ___mWorldEvent._State == WorldEventState.NONE);
+        static bool Prefix(WorldEventManager __instance, WorldEventManager.WorldEvent ___mWorldEvent) => !(__instance is WorldEventScoutAttack scout && ___mWorldEvent != null && (___mWorldEvent._State == WorldEventState.NONE || ___mWorldEvent._State == WorldEventState.END));
 #elif MOBILE
-        static bool Prefix(WorldEventManager __instance) => !(__instance.Is<WorldEventScoutAttack>(out var scout) && __instance.mWorldEvent != null && __instance.mWorldEvent._State == WorldEventState.NONE);
+        static bool Prefix(WorldEventManager __instance) => !(__instance.Is<WorldEventScoutAttack>(out var scout) && __instance.mWorldEvent != null && (__instance.mWorldEvent._State == WorldEventState.NONE || __instance.mWorldEvent._State == WorldEventState.END));
 #endif
     }
 
@@ -1255,6 +1255,87 @@ namespace Bugfixes
         [HarmonyPatch("Update")]
         [HarmonyPrefix]
         static bool Update() => Main.AllowUIUpdate;
+    }
+
+    // Completely replaces all the methods in the HexUtil class because the vanilla code is terribly ineffecient and likely to error
+    [HarmonyPatch(typeof(HexUtil))]
+    static class Patch_HexUtil
+    {
+        [HarmonyPatch("HexToInt")]
+        [HarmonyPrefix]
+        static bool HexToInt(string value,out int __result)
+        {
+            int.TryParse(value, NumberStyles.HexNumber, NumberFormatInfo.CurrentInfo, out __result);
+            return false;
+        }
+
+        [HarmonyPatch("IntToHex")]
+        [HarmonyPrefix]
+        static bool IntToHex(int value, out string __result)
+        {
+            __result = Math.Max(Math.Min(value, 255),0).ToString("X2");
+            return false;
+        }
+
+        [HarmonyPatch("ColorStringToHex")]
+        [HarmonyPrefix]
+        static bool ColorStringToHex(string value, out string __result)
+        {
+            var array = value.Split(new[] { ',' }, StringSplitOptions.None);
+            if (array.Length == 3 || array.Length == 4)
+            {
+                int.TryParse(array[0].Trim(), out var r);
+                int.TryParse(array[1].Trim(), out var g);
+                int.TryParse(array[2].Trim(), out var b);
+                var aStr = "FF";
+                if (array.Length == 4)
+                {
+                    int.TryParse(array[3].Trim(), out var a);
+                    aStr = HexUtil.IntToHex(a);
+                }
+                __result = HexUtil.IntToHex(r) + HexUtil.IntToHex(g) + HexUtil.IntToHex(b) + aStr;
+            }
+            else
+                __result = "";
+            return false;
+        }
+
+        [HarmonyPatch("FloatToHex")]
+        [HarmonyPrefix]
+        static bool FloatToHex(float value, out string __result)
+        {
+            __result = HexUtil.IntToHex((int)Math.Round(Math.Max(int.MinValue, Math.Min(value,(double)int.MaxValue))));
+            return false;
+        }
+
+        [HarmonyPatch("HexToColor")]
+        [HarmonyPrefix]
+        static bool HexToColor(string value, out Color color, out bool __result)
+        {
+            if (value.Length != 8 || !uint.TryParse(value, NumberStyles.HexNumber, NumberFormatInfo.CurrentInfo, out var num))
+            {
+                color = Color.white;
+                __result = false;
+                return false;
+            }
+            color = new Color((num >> 6 & 255) / 255f, (num >> 4 & 255) / 255f, (num >> 2 & 255) / 255f, (num & 255) / 255f);
+            __result = true;
+            return false;
+        }
+
+        [HarmonyPatch("HexToRGB")]
+        [HarmonyPrefix]
+        static bool HexToRGB(string value, out Color __result)
+        {
+            if (value.Length < 6 || !uint.TryParse(value, NumberStyles.HexNumber, NumberFormatInfo.CurrentInfo, out var num))
+            {
+                __result = Color.white;
+                return false;
+            }
+            var offset = value.Length - 6;
+            __result = new Color((num >> (4 + offset) & 255) / 255f, (num >> (2 + offset) & 255) / 255f, (num >> offset & 255) / 255f, (num & 255) / 255f);
+            return false;
+        }
     }
 
 #if DESKTOP
