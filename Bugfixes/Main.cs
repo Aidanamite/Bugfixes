@@ -25,14 +25,14 @@ using static UiWorldEventRewards;
 using UnhollowerBaseLib;
 using static MelonLoader.MelonLogger;
 
-[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.13", "Aidanamite")]
+[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.14", "Aidanamite")]
 [assembly: MelonAdditionalDependencies("MobileTools")]
 #endif
 
 namespace Bugfixes
 {
 #if DESKTOP
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.13")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.14")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
 #elif MOBILE
@@ -1318,7 +1318,7 @@ namespace Bugfixes
                 __result = false;
                 return false;
             }
-            color = new Color((num >> 6 & 255) / 255f, (num >> 4 & 255) / 255f, (num >> 2 & 255) / 255f, (num & 255) / 255f);
+            color = new Color((num >> 24 & 255) / 255f, (num >> 16 & 255) / 255f, (num >> 8 & 255) / 255f, (num & 255) / 255f);
             __result = true;
             return false;
         }
@@ -1332,8 +1332,8 @@ namespace Bugfixes
                 __result = Color.white;
                 return false;
             }
-            var offset = value.Length - 6;
-            __result = new Color((num >> (4 + offset) & 255) / 255f, (num >> (2 + offset) & 255) / 255f, (num >> offset & 255) / 255f, (num & 255) / 255f);
+            var offset = (value.Length - 6) * 4;
+            __result = new Color((num >> (16 + offset) & 255) / 255f, (num >> (8 + offset) & 255) / 255f, (num >> offset & 255) / 255f);
             return false;
         }
     }
