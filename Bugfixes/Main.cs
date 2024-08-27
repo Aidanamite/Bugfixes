@@ -25,14 +25,14 @@ using static UiWorldEventRewards;
 using UnhollowerBaseLib;
 using static MelonLoader.MelonLogger;
 
-[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.14", "Aidanamite")]
+[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.15", "Aidanamite")]
 [assembly: MelonAdditionalDependencies("MobileTools")]
 #endif
 
 namespace Bugfixes
 {
 #if DESKTOP
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.14")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.15")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
 #elif MOBILE
@@ -47,6 +47,8 @@ namespace Bugfixes
         public static bool DisplayDragonGender = true;
         [ConfigField]
         public static bool UIFrameThrottling = true;
+        [ConfigField]
+        public static bool FixEmptyLocaleData = true;
 #if DESKTOP
         [ConfigField(Description = "DEV PURPOSES ONLY: This can take a long time to load (the game will be frozen during this time) and may have significant performance impact while active")]
         public static bool EnableLagSpikeProfiling = false;
@@ -1335,6 +1337,17 @@ namespace Bugfixes
             var offset = (value.Length - 6) * 4;
             __result = new Color((num >> (16 + offset) & 255) / 255f, (num >> (8 + offset) & 255) / 255f, (num >> offset & 255) / 255f);
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(StringTable), "GetStringData")]
+    static class Patch_FixLocale
+    {
+        static void Postfix(int id, string defaultTxt, ref string __result)
+        {
+            if (id != 0 && StringTable.pInstance != null && Main.FixEmptyLocaleData)
+                if (string.IsNullOrEmpty(__result))
+                    __result = string.IsNullOrEmpty(defaultTxt) ? $"[MISSING LANG TEXT: {id}]" : defaultTxt;
         }
     }
 
