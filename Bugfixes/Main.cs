@@ -25,14 +25,14 @@ using static UiWorldEventRewards;
 using UnhollowerBaseLib;
 using static MelonLoader.MelonLogger;
 
-[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.15", "Aidanamite")]
+[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.16", "Aidanamite")]
 [assembly: MelonAdditionalDependencies("MobileTools")]
 #endif
 
 namespace Bugfixes
 {
 #if DESKTOP
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.15")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.16")]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
 #elif MOBILE
@@ -357,19 +357,6 @@ namespace Bugfixes
 
         static FieldInfo _locals = typeof(ILGenerator).GetField("locals", ~BindingFlags.Default);
         public static LocalBuilder[] GetLocals(this ILGenerator generator) => (LocalBuilder[])_locals.GetValue(generator);
-
-        static FieldInfo _mDragonMale = typeof(UiDragonCustomization).GetField("mDragonMale", ~BindingFlags.Default);
-        public static bool IsMale(this UiDragonCustomization ui) => (bool)_mDragonMale.GetValue(ui);
-        public static void IsMale(this UiDragonCustomization ui, bool newValue) => _mDragonMale.SetValue(ui, newValue);
-        static FieldInfo _mToggleBtnMale = typeof(UiDragonCustomization).GetField("mToggleBtnMale", ~BindingFlags.Default);
-        public static KAToggleButton GetButtonMale(this UiDragonCustomization ui) => (KAToggleButton)_mToggleBtnMale.GetValue(ui);
-        static FieldInfo _mToggleBtnFemale = typeof(UiDragonCustomization).GetField("mToggleBtnFemale", ~BindingFlags.Default);
-        public static KAToggleButton GetButtonFemale(this UiDragonCustomization ui) => (KAToggleButton)_mToggleBtnFemale.GetValue(ui);
-        static FieldInfo _StartChecked = typeof(KAToggleButton).GetField("_StartChecked", ~BindingFlags.Default);
-        public static void SetStartChecked(this KAToggleButton ui, bool value) => _StartChecked.SetValue(ui,value);
-
-        static MethodInfo _pGamePlayTime = typeof(SquadTactics.GameManager).GetProperty("pGamePlayTime", ~BindingFlags.Default).GetSetMethod(true);
-        public static void SetGamePlayTime(this SquadTactics.GameManager manager, float value) => _pGamePlayTime.Invoke(manager,new object[] { value });
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T get_Item<T>(this List<T> l, int index) => l[index];
@@ -1045,16 +1032,6 @@ namespace Bugfixes
     [HarmonyPatch(typeof(UiDragonCustomization),"OnClick")]
     static class Patch_UpdateCustomization
     {
-#if DESKTOP
-        static void Postfix(UiDragonCustomization __instance, KAWidget inItem, ref bool ___mUiRefresh, KAToggleButton ___mToggleBtnFemale, KAToggleButton ___mToggleBtnMale, bool ___mDragonMale)
-        {
-            if (Main.DisplayDragonGender && (inItem == ___mToggleBtnMale || inItem == ___mToggleBtnFemale))
-            {
-                __instance.pPetData.Gender = ___mDragonMale ? Gender.Male : Gender.Female;
-                ___mUiRefresh = true;
-            }
-        }
-#elif MOBILE
         static void Postfix(UiDragonCustomization __instance, KAWidget inItem)
         {
             if (Main.DisplayDragonGender && (inItem == __instance.mToggleBtnMale || inItem == __instance.mToggleBtnFemale))
@@ -1063,7 +1040,6 @@ namespace Bugfixes
                 __instance.mUiRefresh = true;
             }
         }
-#endif
     }
 
     // Used by the dragon gender display in situations where a set of IL instructions could not be found to append the current pet to the stack.
@@ -1088,11 +1064,7 @@ namespace Bugfixes
         static void Postfix(KAUISelectDragon __instance)
         {
             if (__instance.Is < UiDragonCustomization>(out var ui))
-#if DESKTOP
-                ui.IsMale(ui.pPetData.Gender == Gender.Male);
-#elif MOBILE
                 ui.mDragonMale = ui.pPetData.Gender == Gender.Male;
-#endif
         }
     }
 
@@ -1100,21 +1072,6 @@ namespace Bugfixes
     [HarmonyPatch(typeof(UiDragonCustomization), "Initialize")]
     static class Patch_InitDragonCustomization
     {
-#if DESKTOP
-        static void Postfix(UiDragonCustomization __instance, KAToggleButton ___mToggleBtnFemale, KAToggleButton ___mToggleBtnMale)
-        {
-            if (___mToggleBtnMale)
-            {
-                ___mToggleBtnMale.SetChecked(__instance.IsMale());
-                ___mToggleBtnMale.SetStartChecked(__instance.IsMale());
-            }
-            if (___mToggleBtnFemale)
-            {
-                ___mToggleBtnFemale.SetChecked(!__instance.IsMale());
-                ___mToggleBtnFemale.SetStartChecked(!__instance.IsMale());
-            }
-        }
-#elif MOBILE
         static void Postfix(UiDragonCustomization __instance)
         {
             if (__instance.mToggleBtnMale)
@@ -1128,7 +1085,6 @@ namespace Bugfixes
                 __instance.mToggleBtnFemale._StartChecked = !__instance.mDragonMale;
             }
         }
-#endif
     }
 
     // Fixes a bug where you could click on battle objects underneath UI buttons sometimes causing unintended actions
@@ -1148,11 +1104,7 @@ namespace Bugfixes
             else
                 return true;
             if (__instance._GameState != SquadTactics.GameManager.GameState.GAMEOVER)
-#if DESKTOP
-                __instance.SetGamePlayTime(__instance.pGamePlayTime + Time.deltaTime);
-#elif MOBILE
                 __instance.pGamePlayTime = __instance.pGamePlayTime + Time.deltaTime;
-#endif
             return false;
         }
     }
@@ -1215,32 +1167,21 @@ namespace Bugfixes
     [HarmonyPatch(typeof(SquadTactics.UiEndDB), "SetRewards")]
     static class Patch_DisplayDTEndResult
     {
-#if DESKTOP
-        static void Postfix(UiBattleBackpack ___mBattleBackPack)
-        {
-            Patch_PreventItemMenuLoad.BypassFix = true;
-            ___mBattleBackPack.pKAUiSelectMenu.FinishMenuItems(false);
-            Patch_PreventItemMenuLoad.BypassFix = false;
-        }
-#elif MOBILE
         static void Postfix(SquadTactics.UiEndDB __instance)
         {
             Patch_PreventItemMenuLoad.BypassFix = true;
             __instance.mBattleBackPack.pKAUiSelectMenu.FinishMenuItems(false);
             Patch_PreventItemMenuLoad.BypassFix = false;
         }
-#endif
     }
 
     // An attempt to fix a softlock issue with scout ship battle events
     [HarmonyPatch(typeof(WorldEventManager), "InitEvent", typeof(string), typeof(string), typeof(string))]
     static class Patch_TryStartEvent
     {
-#if DESKTOP
-        static bool Prefix(WorldEventManager __instance, WorldEventManager.WorldEvent ___mWorldEvent) => !(__instance is WorldEventScoutAttack scout && ___mWorldEvent != null && (___mWorldEvent._State == WorldEventState.NONE || ___mWorldEvent._State == WorldEventState.END));
-#elif MOBILE
-        static bool Prefix(WorldEventManager __instance) => !(__instance.Is<WorldEventScoutAttack>(out var scout) && __instance.mWorldEvent != null && (__instance.mWorldEvent._State == WorldEventState.NONE || __instance.mWorldEvent._State == WorldEventState.END));
-#endif
+        static bool Prefix(WorldEventManager __instance)
+            => !(__instance.Is<WorldEventScoutAttack>(out var scout)
+            && (scout.mActionEndResult != null || (scout.mEndResultDB?._EventCompleteUi?.GetVisibility() ?? false)));
     }
 
     // Allows limiting of the UI framerate based on the number of UI objects present. AllowUIUpdate is updated in Main.Update
