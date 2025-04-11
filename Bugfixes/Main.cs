@@ -14,31 +14,37 @@ using Object = UnityEngine.Object;
 using Debug = UnityEngine.Debug;
 
 
+
+
+
 #if DESKTOP
 using BepInEx;
 using ConfigTweaks;
 using System.Diagnostics;
 #elif MOBILE
+using Il2Cpp;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using MelonLoader;
 using MobileTools;
-using static UiWorldEventRewards;
-using UnhollowerBaseLib;
+using SquadTactics = Il2CppSquadTactics;
+using static Il2Cpp.UiWorldEventRewards;
 using static MelonLoader.MelonLogger;
 
-[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", "1.0.16", "Aidanamite")]
+[assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", Bugfixes.Main.VERSION, "Aidanamite")]
 [assembly: MelonAdditionalDependencies("MobileTools")]
 #endif
 
 namespace Bugfixes
 {
 #if DESKTOP
-    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", "1.0.16")]
+    [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", VERSION)]
     [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
 #elif MOBILE
     public class Main : MelonMod
 #endif
     {
+        public const string VERSION = "1.0.17";
         [ConfigField]
         public static KeyCode ForceInteractable = KeyCode.KeypadMultiply;
         [ConfigField]
@@ -330,14 +336,14 @@ namespace Bugfixes
             if (items != null && items.Count > 0)
                 for (int i = 0; i < items.Count; i++)
                 {
-                    var widget = (IncubatorWidgetData)items.get_Item(i).GetUserData();
+                    var widget = (IncubatorWidgetData)items[i].GetUserData();
                     if (widget != null && widget.Incubator)
                     {
 #if DESKTOP
                         Debug.Log($"Incubator {widget.Incubator} is in state {widget.Incubator.pMyState}");
 #endif
                         if (widget.Incubator.pMyState <= Incubator.IncubatorStates.IDLE)
-                            return items.get_Item(i);
+                            return items[i];
                     }
                 }
             return null;
@@ -409,6 +415,34 @@ namespace Bugfixes
             {
                 __result = false;
                 return false;
+            }
+            return true;
+        }
+    }
+
+    // Fixes a bug caused by the clan color button having been renamed in the assetbundle causing an error during UI initialization and softlocking the game
+    [HarmonyPatch]
+    static class Patch_ItemCustomization
+    {
+        static UiAvatarItemCustomization current;
+
+        [HarmonyPatch(typeof(UiAvatarItemCustomization), "Start")]
+        static void Prefix(UiAvatarItemCustomization __instance, ref UiAvatarItemCustomization __state)
+        {
+            __state = current;
+            current = __instance;
+        }
+        [HarmonyPatch(typeof(UiAvatarItemCustomization), "Start")]
+        static void Postfix(UiAvatarItemCustomization __state) => current = __state;
+
+        [HarmonyPatch(typeof(KAUI), "FindItem", typeof(string), typeof(bool))]
+        static bool Prefix(KAUI __instance, string inWidgetName, ref KAWidget __result)
+        {
+            if (__instance == current)
+            {
+                if ((inWidgetName == "SyncColorBtn" && (__result = __instance.FindItem("CrestBGColorBtn", true)))
+                    || (inWidgetName == "SyncClanColorBtn" && (__result = __instance.FindItem("CrestFGColorBtn"))))
+                    return false;
             }
             return true;
         }
@@ -511,7 +545,11 @@ namespace Bugfixes
         static void Prefix(RewardWidget __instance, RewardWidget.RewardPositionsData inRewardPositionData)
         {
             if (__instance.mAddRewardCallIndex >= inRewardPositionData._Positions.Length)
-                Il2CppSystem.Array.Resize(inRewardPositionData._Positions, __instance.mAddRewardCallIndex + 1);
+            {
+                var p = inRewardPositionData._Positions.Cast<Il2CppArrayBase<Vector2>>();
+                Il2CppSystem.Array.Resize(ref p, __instance.mAddRewardCallIndex + 1);
+                inRewardPositionData._Positions = p.Cast<Il2CppStructArray<Vector2>>();
+            }
         }
 #endif
     }
@@ -904,7 +942,7 @@ namespace Bugfixes
                 }
                 else if (__instance.Is<UiMessageInfoUserData>(out var miud))
                 {
-                    var reward = string.IsNullOrEmpty(miud.mMessageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(miud.mMessageInfo.Data, typeof(RewardData).ToIl2Cpp()) as RewardData);
+                    var reward = string.IsNullOrEmpty(miud.mMessageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(miud.mMessageInfo.Data, typeof(Il2Cpp.RewardData).ToIl2Cpp()) as Il2Cpp.RewardData);
                     var entity = reward != null && !string.IsNullOrEmpty(reward.EntityID) ? RaisedPetData.GetByEntityID(new NullableStruct<Il2CppSystem.Guid>(new Il2CppSystem.Guid(reward.EntityID))) : null;
                     if (entity != null)
                         Patch_GetLocalizedString.Target = entity.ToTarget();
@@ -921,9 +959,9 @@ namespace Bugfixes
     [HarmonyPatch]
     static class Patch_DisplayDragonGender_ArgumentsPrefixes
     {
-        [HarmonyPatch(typeof(JSGames.UI.Util.UIUtil), "ReplaceTagWithPetData")]
+        [HarmonyPatch(typeof(Il2CppJSGames.UI.Util.UIUtil), "ReplaceTagWithPetData")]
         [HarmonyPrefix]
-        static void ReplaceTagWithPetData(RewardData inRewardData)
+        static void ReplaceTagWithPetData(Il2Cpp.RewardData inRewardData)
         {
             if (Main.DisplayDragonGender)
             {
@@ -955,7 +993,7 @@ namespace Bugfixes
                 Patch_GetLocalizedString.ClearTargets();
                 for (int i = 0; i < slotData.PetIDs.Count; i++)
                 {
-                    RaisedPetData byID = RaisedPetData.GetByID(slotData.PetIDs.get_Item(i));
+                    RaisedPetData byID = RaisedPetData.GetByID(slotData.PetIDs[i]);
                     if (byID != null)
                         Patch_GetLocalizedString.AddTarget(byID.ToTarget());
                 }
@@ -967,7 +1005,7 @@ namespace Bugfixes
         {
             if (Main.DisplayDragonGender)
             {
-                var reward = string.IsNullOrEmpty(messageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(messageInfo.Data, typeof(RewardData).ToIl2Cpp()) as RewardData);
+                var reward = string.IsNullOrEmpty(messageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(messageInfo.Data, typeof(Il2Cpp.RewardData).ToIl2Cpp()) as Il2Cpp.RewardData);
                 var entity = reward != null && !string.IsNullOrEmpty(reward.EntityID) ? RaisedPetData.GetByEntityID(new NullableStruct<Il2CppSystem.Guid>(new Il2CppSystem.Guid(reward.EntityID))) : null;
                 if (entity != null)
                     Patch_GetLocalizedString.Target = entity.ToTarget();
@@ -979,7 +1017,7 @@ namespace Bugfixes
     {
         static IEnumerable<MethodBase> TargetMethods()
         {
-            yield return AccessTools.Method(typeof(JSGames.UI.Util.UIUtil), "ReplaceTagWithPetData");
+            yield return AccessTools.Method(typeof(Il2CppJSGames.UI.Util.UIUtil), "ReplaceTagWithPetData");
             yield return AccessTools.Method(typeof(UiDragonsListCard), "SetSelectedDragonItem");
             yield return AccessTools.Method(typeof(UiSelectHeroDragons), "AddDragonDetails");
             yield return AccessTools.Method(typeof(UiStableQuestCompleteMenu), "PopulateItems");
@@ -1016,11 +1054,13 @@ namespace Bugfixes
             if (Target.Target != null)
                 Targets.Add(Target);
         }
+        static HashSet<string> modified = new HashSet<string>();
         static void Postfix(LocaleString __instance, ref string __result)
         {
-            if (Targets.Count != 0 && __instance._ID == Targets[Pos].Target._ID && __instance._Text == Targets[Pos].Target._Text)
+            if (Targets.Count != 0 && __instance._ID == Targets[Pos].Target._ID && __instance._Text == Targets[Pos].Target._Text && !modified.Contains(__result))
             {
                 __result = Targets[Pos].Gender + " " + __result;
+                modified.Add(__result);
                 Pos = (Pos + 1) % Targets.Count;
             }
 
@@ -1181,7 +1221,10 @@ namespace Bugfixes
     {
         static bool Prefix(WorldEventManager __instance)
             => !(__instance.Is<WorldEventScoutAttack>(out var scout)
-            && (scout.mActionEndResult != null || (scout.mEndResultDB?._EventCompleteUi?.GetVisibility() ?? false)));
+                && (
+                    scout.mActionEndResult != null
+                    || (scout.mEndResultDB?._EventCompleteUi?.GetVisibility() ?? false)
+                ));
     }
 
     // Allows limiting of the UI framerate based on the number of UI objects present. AllowUIUpdate is updated in Main.Update
