@@ -38,13 +38,13 @@ namespace Bugfixes
 {
 #if DESKTOP
     [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", VERSION)]
-    [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
+    [BepInDependency("com.aidanamite.ConfigTweaks", Bugfixes.Main.VERSION)]
     public class Main : BaseUnityPlugin
 #elif MOBILE
     public class Main : MelonMod
 #endif
     {
-        public const string VERSION = "1.0.17";
+        public const string VERSION = "1.0.19";
         [ConfigField]
         public static KeyCode ForceInteractable = KeyCode.KeypadMultiply;
         [ConfigField]
@@ -365,8 +365,6 @@ namespace Bugfixes
         public static LocalBuilder[] GetLocals(this ILGenerator generator) => (LocalBuilder[])_locals.GetValue(generator);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static T get_Item<T>(this List<T> l, int index) => l[index];
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool Is<T>(this object obj) => obj is T;
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool Is<T>(this object obj,out T nObj)
@@ -379,9 +377,13 @@ namespace Bugfixes
             nObj = default;
             return false;
         }
+
+        public static IEnumerable<T> ToEnumerable<T>(this IEnumerable<T> l) => l;
 #elif MOBILE
         public static (LocaleString, Gender) ToTarget(this RaisedPetData data) => data == null ? default : (SanctuaryData.FindSanctuaryPetTypeInfo(data.PetTypeID)._NameText, data.Gender);
         public static (LocaleString, Gender) ToTarget(this HeroPetData data) => data == null ? default : (SanctuaryData.FindSanctuaryPetTypeInfo(data._TypeID)._NameText, data._Gender);
+
+        public static Il2CppSystem.Collections.Generic.IEnumerable<T> ToEnumerable<T>(this Il2CppSystem.Collections.Generic.List<T> l) => l.Cast<Il2CppSystem.Collections.Generic.IEnumerable<T>>();
 #endif
     }
 
@@ -908,11 +910,8 @@ namespace Bugfixes
                     Patch_GetLocalizedString.Target = SanctuaryManager.pCurPetInstance.pData.ToTarget();
                 else if (__instance.Is<UiDragonCustomization>(out var dc))
                     Patch_GetLocalizedString.Target = dc.mPetData.ToTarget();
-                else if (__instance.Is<UiDragonsAgeUpMenuItem>(out var aumi))
-                {
-                    var data = (AgeUpUserData)aumi.GetUserData();
-                    Patch_GetLocalizedString.Target = data.pData.ToTarget();
-                }
+                else if (__instance.Is<UiDragonsAgeUpMenuItem>(out var aumi) && aumi.GetUserData().Is<AgeUpUserData>(out var agedata))
+                    Patch_GetLocalizedString.Target = agedata.pData.ToTarget();
                 else if (__instance.Is<UiDragonsInfoCardItem>(out var dici))
                     Patch_GetLocalizedString.Target = dici.mSelectedPetData.ToTarget();
                 else if (__instance.Is<UiDragonsListCardMenu>(out var dlcm))
@@ -942,7 +941,7 @@ namespace Bugfixes
                 }
                 else if (__instance.Is<UiMessageInfoUserData>(out var miud))
                 {
-                    var reward = string.IsNullOrEmpty(miud.mMessageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(miud.mMessageInfo.Data, typeof(Il2Cpp.RewardData).ToIl2Cpp()) as Il2Cpp.RewardData);
+                    var reward = string.IsNullOrEmpty(miud.mMessageInfo.Data) ? null : (UtUtilities.DeserializeFromXml(miud.mMessageInfo.Data, typeof(Il2Cpp.RewardData).ToIl2Cpp()).Is<Il2Cpp.RewardData>(out var r) ? r : null);
                     var entity = reward != null && !string.IsNullOrEmpty(reward.EntityID) ? RaisedPetData.GetByEntityID(new NullableStruct<Il2CppSystem.Guid>(new Il2CppSystem.Guid(reward.EntityID))) : null;
                     if (entity != null)
                         Patch_GetLocalizedString.Target = entity.ToTarget();
@@ -1216,15 +1215,66 @@ namespace Bugfixes
     }
 
     // An attempt to fix a softlock issue with scout ship battle events
-    [HarmonyPatch(typeof(WorldEventManager), "InitEvent", typeof(string), typeof(string), typeof(string))]
+    /*[HarmonyPatch(typeof(WorldEventManager), "InitEvent", typeof(string), typeof(string), typeof(string))]
     static class Patch_TryStartEvent
     {
-        static bool Prefix(WorldEventManager __instance)
-            => !(__instance.Is<WorldEventScoutAttack>(out var scout)
+        static bool Prefix(WorldEventManager __instance, string name, string value, string lastEventEndValue)
+        {
+            Main.LogInfo($"[type={__instance.GetType().FullName},name={name},value={value},lastEnd={lastEventEndValue}]\n{Environment.StackTrace}");
+            return !(__instance.Is<WorldEventScoutAttack>(out var scout)
                 && (
                     scout.mActionEndResult != null
                     || (scout.mEndResultDB?._EventCompleteUi?.GetVisibility() ?? false)
                 ));
+        }
+    }*/
+    [HarmonyPatch(typeof(WorldEventMMOClient), "ParseRoomVariables")]
+    static class Patch_ParseScoutAttack
+    {
+#if DESKTOP
+        static void Prefix(ref List<KnowledgeAdventure.Multiplayer.Model.MMORoomVariable> roomVars, List<object> changedKeys)
+#else
+        static void Prefix(ref Il2CppSystem.Collections.Generic.List<Il2CppKnowledgeAdventure.Multiplayer.Model.MMORoomVariable> roomVars, Il2CppSystem.Collections.Generic.List<Il2CppSystem.Object> changedKeys)
+#endif
+        {
+            if (roomVars != null)
+            {
+                for (int i = 0; i < roomVars.Count; i++)
+                    if ("WE_ScoutAttack".Equals(roomVars[i].Name))
+                    {
+                        if (!changedKeys.Contains(roomVars[i].Name))
+                        {
+                            roomVars = new(roomVars.ToEnumerable());
+                            roomVars.RemoveAt(i);
+                        }
+                        break;
+                    }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(WorldEventScoutAttack), "PopulateScore")]
+    static class Patch_PopulateScoutAttackScores
+    {
+#if DESKTOP
+        static void Prefix(ref string[] scores)
+#else
+        static void Prefix(ref Il2CppStringArray scores)
+#endif
+        {
+            var look = AvatarData.pInstance.DisplayName + "/";
+            foreach (var s in scores)
+                if (s.StartsWith(look))
+                    return;
+#if DESKTOP
+            Array.Resize(ref scores, scores.Length + 1);
+#else
+            var p = scores.Cast<Il2CppArrayBase<Il2CppSystem.String>>();
+            Il2CppSystem.Array.Resize(ref p, p.Length + 1);
+            scores = p.Cast<Il2CppStringArray>();
+#endif
+            scores[scores.Length - 1] = look + "0";
+        }
     }
 
     // Allows limiting of the UI framerate based on the number of UI objects present. AllowUIUpdate is updated in Main.Update

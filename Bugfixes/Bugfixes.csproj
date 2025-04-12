@@ -55,6 +55,10 @@
       <HintPath>D:\program\sod\DOMain_Data\Managed\Assembly-CSharp.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="KnowledgeAdventure.Multiplayer">
+      <HintPath>D:\program\sod\DOMain_Data\Managed\KnowledgeAdventure.Multiplayer.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="Assembly-CSharp-firstpass">
       <HintPath>D:\program\sod\DOMain_Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
       <Private>False</Private>
