@@ -38,7 +38,7 @@ namespace Bugfixes
 {
 #if DESKTOP
     [BepInPlugin("com.aidanamite.Bugfixes", "Client Bugfixes", VERSION)]
-    [BepInDependency("com.aidanamite.ConfigTweaks", Bugfixes.Main.VERSION)]
+    [BepInDependency("com.aidanamite.ConfigTweaks", "1.1.0")]
     public class Main : BaseUnityPlugin
 #elif MOBILE
     public class Main : MelonMod
