@@ -44,7 +44,7 @@ namespace Bugfixes
     public class Main : MelonMod
 #endif
     {
-        public const string VERSION = "1.0.19";
+        public const string VERSION = "1.0.20";
         [ConfigField]
         public static KeyCode ForceInteractable = KeyCode.KeypadMultiply;
         [ConfigField]
@@ -126,6 +126,7 @@ namespace Bugfixes
         public void Update()
         {
 #elif MOBILE
+
         public override void OnUpdate()
         {
             base.OnUpdate();
@@ -636,6 +637,7 @@ namespace Bugfixes
         }
     }*/
 
+
     // Fixes a bug with the age up prompt where the player's control would not be restored when closing the ui
 #if DESKTOP
     [HarmonyPatch(typeof(DragonAgeUpConfig), "ShowAgeUpUI", typeof(DragonAgeUpConfig.OnDragonAgeUpDone), typeof(RaisedPetStage), typeof(RaisedPetData), typeof(RaisedPetStage[]), typeof(bool), typeof(bool), typeof(GameObject), typeof(string))]
@@ -646,30 +648,60 @@ namespace Bugfixes
             if (inOnDoneCallback != null)
             {
                 DragonAgeUpConfig.ShowAgeUpUI(inOnDoneCallback.Invoke, inOnDoneCallback, inOnDoneCallback.Invoke, fromStage, inData, requiredStages, ageUpDone, isUnmountableAllowed, messageObj, assetName);
-#elif MOBILE
-    [HarmonyPatch(typeof(DragonAgeUpConfig), "ShowAgeUpUI", typeof(DragonAgeUpConfig.OnDragonAgeUpDone), typeof(RaisedPetStage), typeof(RaisedPetData), typeof(Il2CppStructArray<RaisedPetStage>), typeof(bool), typeof(bool), typeof(GameObject), typeof(string))]
-    static class Patch_ShowAgeUpUI_SimpleToComplex
-    {
-        static bool Prefix(DragonAgeUpConfig.OnDragonAgeUpDone inOnDoneCallback, RaisedPetStage fromStage, RaisedPetData inData, Il2CppStructArray<RaisedPetStage> requiredStages, bool ageUpDone, bool isUnmountableAllowed, GameObject messageObj, string assetName)
-        {
-            if (inOnDoneCallback != null)
-            {
-                DragonAgeUpConfig.ShowAgeUpUI(AgeUpCancelConverter.ConvertAction(inOnDoneCallback.Invoke), inOnDoneCallback, AgeUpBuyConverter.ConvertAction(inOnDoneCallback.Invoke), fromStage, inData, requiredStages, ageUpDone, isUnmountableAllowed, messageObj, assetName);
-#endif
                 return false;
             }
             return true;
         }
     }
+#else
+    [HarmonyPatch(typeof(DragonAgeUpConfig))]
+    static class Patch_AgeUpUI
+    {
+        static int state = 0;
 
-#if MOBILE
-    public class AgeUpCancelConverter : DelegateConverter<Action, DragonAgeUpConfig.OnDragonAgeUpCancel, AgeUpCancelConverter>
-    {
-        void Invoke() => Delegate.Invoke();
-    }
-    public class AgeUpBuyConverter : DelegateConverter<Action, DragonAgeUpConfig.OnDragonAgeUpBuy, AgeUpBuyConverter>
-    {
-        void Invoke() => Delegate.Invoke();
+        [HarmonyPatch("CleanupCallbacks")]
+        [HarmonyPrefix]
+        static void CleanupCallbacks()
+        {
+            if (state == 1 || state == 2)
+                DragonAgeUpConfig.OnUiDragonAgeUpClose();
+        }
+
+
+        [HarmonyPatch("OnUiDragonAgeUpCancel")]
+        [HarmonyPrefix]
+        static void OnUiDragonAgeUpCancel_Pre(out int __state)
+        {
+            __state = state;
+            state = 1;
+        }
+        [HarmonyPatch("OnUiDragonAgeUpCancel")]
+        [HarmonyFinalizer]
+        static void OnUiDragonAgeUpCancel_Post(int __state) => state = __state;
+
+
+        [HarmonyPatch("OnUiDragonAgeUpBuy")]
+        [HarmonyPrefix]
+        static void OnUiDragonAgeUpBuy_Pre(out int __state)
+        {
+            __state = state;
+            state = 2;
+        }
+        [HarmonyPatch("OnUiDragonAgeUpBuy")]
+        [HarmonyFinalizer]
+        static void OnUiDragonAgeUpBuy_Post(int __state) => state = __state;
+
+
+        [HarmonyPatch("OnUiDragonAgeUpClose")]
+        [HarmonyPrefix]
+        static void OnUiDragonAgeUpClose_Pre(out int __state)
+        {
+            __state = state;
+            state = 3;
+        }
+        [HarmonyPatch("OnUiDragonAgeUpClose")]
+        [HarmonyFinalizer]
+        static void OnUiDragonAgeUpClose_Post(int __state) => state = __state;
     }
 #endif
 
@@ -1214,20 +1246,7 @@ namespace Bugfixes
         }
     }
 
-    // An attempt to fix a softlock issue with scout ship battle events
-    /*[HarmonyPatch(typeof(WorldEventManager), "InitEvent", typeof(string), typeof(string), typeof(string))]
-    static class Patch_TryStartEvent
-    {
-        static bool Prefix(WorldEventManager __instance, string name, string value, string lastEventEndValue)
-        {
-            Main.LogInfo($"[type={__instance.GetType().FullName},name={name},value={value},lastEnd={lastEventEndValue}]\n{Environment.StackTrace}");
-            return !(__instance.Is<WorldEventScoutAttack>(out var scout)
-                && (
-                    scout.mActionEndResult != null
-                    || (scout.mEndResultDB?._EventCompleteUi?.GetVisibility() ?? false)
-                ));
-        }
-    }*/
+    // Fix a softlock issue with scout ship battle events where a second event could start during the rewards screen causing the score list to clear and break the UI
     [HarmonyPatch(typeof(WorldEventMMOClient), "ParseRoomVariables")]
     static class Patch_ParseScoutAttack
     {
@@ -1253,27 +1272,28 @@ namespace Bugfixes
         }
     }
 
+    // Fix a softlock caused by the client thinking they participated in the event but they aren't on the score board
     [HarmonyPatch(typeof(WorldEventScoutAttack), "PopulateScore")]
     static class Patch_PopulateScoutAttackScores
     {
 #if DESKTOP
-        static void Prefix(ref string[] scores)
+        static void Prefix(ref string[] playersData)
 #else
-        static void Prefix(ref Il2CppStringArray scores)
+        static void Prefix(ref Il2CppStringArray playersData)
 #endif
         {
             var look = AvatarData.pInstance.DisplayName + "/";
-            foreach (var s in scores)
+            foreach (var s in playersData)
                 if (s.StartsWith(look))
                     return;
 #if DESKTOP
-            Array.Resize(ref scores, scores.Length + 1);
+            Array.Resize(ref playersData, playersData.Length + 1);
 #else
-            var p = scores.Cast<Il2CppArrayBase<Il2CppSystem.String>>();
+            var p = playersData.Cast<Il2CppArrayBase<Il2CppSystem.String>>();
             Il2CppSystem.Array.Resize(ref p, p.Length + 1);
-            scores = p.Cast<Il2CppStringArray>();
+            playersData = p.Cast<Il2CppStringArray>();
 #endif
-            scores[scores.Length - 1] = look + "0";
+            playersData[playersData.Length - 1] = look + "0";
         }
     }
 
