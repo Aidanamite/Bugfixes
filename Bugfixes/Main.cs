@@ -17,6 +17,7 @@ using Debug = UnityEngine.Debug;
 
 
 
+
 #if DESKTOP
 using BepInEx;
 using ConfigTweaks;
@@ -29,6 +30,7 @@ using MobileTools;
 using SquadTactics = Il2CppSquadTactics;
 using static Il2Cpp.UiWorldEventRewards;
 using static MelonLoader.MelonLogger;
+using Il2CppInterop.Runtime.InteropTypes;
 
 [assembly: MelonInfo(typeof(Bugfixes.Main), "Client Bugfixes", Bugfixes.Main.VERSION, "Aidanamite")]
 [assembly: MelonAdditionalDependencies("MobileTools")]
@@ -44,7 +46,7 @@ namespace Bugfixes
     public class Main : MelonMod
 #endif
     {
-        public const string VERSION = "1.0.20";
+        public const string VERSION = "1.0.21";
         [ConfigField]
         public static KeyCode ForceInteractable = KeyCode.KeypadMultiply;
         [ConfigField]
@@ -637,6 +639,63 @@ namespace Bugfixes
         }
     }*/
 
+    // Fixes an issue where 
+    [HarmonyPatch(typeof(RaisedPetData), "ServiceEventHandler")]
+    static class Patch_AppendPetData
+    {
+#if DESKTOP
+        static void Prefix(WsServiceType inType, WsServiceEvent inEvent, float inProgress, ref object inObject, object inUserData)
+#else
+        static void Prefix(WsServiceType inType, WsServiceEvent inEvent, float inProgress, ref Il2CppSystem.Object inObject, Il2CppSystem.Object inUserData)
+#endif
+        {
+            if (inEvent == WsServiceEvent.COMPLETE && inUserData.Is<RaisedPetGetData>()
+#if DESKTOP
+                && inObject.Is<RaisedPetData[]>(out var parray))
+#else
+                && inObject.Is<Il2CppReferenceArray<RaisedPetData>>(out var parray))
+#endif
+            {
+                foreach (var p in parray)
+                    if (!IsntFish(p))
+                    {
+                        if (p.IsSelected)
+                        {
+                            p.IsSelected = false;
+                            Release(p);
+                        }
+                        Release(p);
+                    }
+#if DESKTOP
+                inObject = parray.Where(IsntFish).ToArray();
+#else
+                inObject = new Il2CppReferenceArray<RaisedPetData>(parray.Where(IsntFish).ToArray()).Cast<Il2CppSystem.Object>();
+#endif
+            }
+        }
+
+        static bool IsntFish(RaisedPetData data) => data.PetTypeID != 2;
+
+        static void Release(RaisedPetData petData)
+        {
+#if DESKTOP
+            petData.ReleasePet(null);
+#else
+            ServiceRequest serviceRequest = new ServiceRequest();
+            serviceRequest._Type = WsServiceType.SET_RAISED_PET_INACTIVE;
+            WsWebService.AddCommon(serviceRequest);
+            serviceRequest.AddParam("raisedPetID", petData.RaisedPetID);
+            string text = WsWebService.Ticks.ToString();
+            serviceRequest.AddParam("ticks", text);
+            serviceRequest.AddParam("signature", WsMD5Hash.GetMd5Hash(text + WsWebService.mSecret + WsWebService.mUserToken + petData.RaisedPetID.ToString()));
+            serviceRequest._URL = WsWebService.mContentURL + "SetRaisedPetInactive";
+            ServiceCall<bool> serviceCall = ServiceCall<bool>.Create(serviceRequest, ServiceCallType.NONE);
+            if (serviceCall == null)
+                return;
+            serviceCall.DoSet();
+#endif
+        }
+    }
 
     // Fixes a bug with the age up prompt where the player's control would not be restored when closing the ui
 #if DESKTOP
