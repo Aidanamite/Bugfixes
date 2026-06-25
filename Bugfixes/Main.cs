@@ -12,6 +12,8 @@ using System.Threading;
 using System.Globalization;
 using Object = UnityEngine.Object;
 using Debug = UnityEngine.Debug;
+using System.Text.RegularExpressions;
+
 
 
 
@@ -46,7 +48,7 @@ namespace Bugfixes
     public class Main : MelonMod
 #endif
     {
-        public const string VERSION = "1.0.21";
+        public const string VERSION = "1.0.22";
         [ConfigField]
         public static KeyCode ForceInteractable = KeyCode.KeypadMultiply;
         [ConfigField]
@@ -57,6 +59,8 @@ namespace Bugfixes
         public static bool UIFrameThrottling = true;
         [ConfigField]
         public static bool FixEmptyLocaleData = true;
+        [ConfigField]
+        public static string AmbientMusicRegex = "Mus";
 #if DESKTOP
         [ConfigField(Description = "DEV PURPOSES ONLY: This can take a long time to load (the game will be frozen during this time) and may have significant performance impact while active")]
         public static bool EnableLagSpikeProfiling = false;
@@ -471,41 +475,29 @@ namespace Bugfixes
 #endif
     }
 
+
     // An attempt to fix certain music being treated like general sound effects
-    [HarmonyPatch]
+    [HarmonyPatch(typeof(SnChannel),"Awake")]
     static class Patch_SoundGroup
     {
-        //static HashSet<(string, PoolGroup)> found = new HashSet<(string, PoolGroup)>();
-        static IEnumerable<MethodBase> TargetMethods()
+        static void Prefix(SnChannel __instance)
         {
-            yield return AccessTools.Method(typeof(SnChannel), "ApplySettings");
-            yield return AccessTools.Method(typeof(SnChannel), "AddChannel", new[] { typeof(SnChannel) });
-            yield return AccessTools.Method(typeof(SnChannel), "SetVolumeForPoolGroup");
-            yield return AccessTools.Method(typeof(SnChannel), "TurnOffPools");
-        }
-#if DESKTOP
-        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-        {
-            var code = instructions.ToList();
-            for (int i = code.Count - 1; i >= 0; i--)
-                if (code[i].opcode == OpCodes.Ldfld && code[i].operand is FieldInfo f && f.Name == "_Group")
-                    code.Insert(i, new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(Patch_SoundGroup), nameof(CheckGroup))));
-            return code;
-        }
-#elif MOBILE
-        static void Prefix()
-        {
-            foreach (var pool in SnChannel.mTurnedOffPools)
-                CheckGroup(pool);
-        }
-#endif
-        static PoolInfo CheckGroup(PoolInfo instance)
-        {
-            if (instance._Name == "AmbSFX_Pool")
-                instance._Group = PoolGroup.MUSIC;
-            //if (found.Add((instance._Name, instance._Group)))
-            //Main.LogSource.LogInfo($"Pool info {instance._Group} \"{instance._Name}\"");
-            return instance;
+            var name = __instance.audio?.clip ? __instance.audio?.clip.name : __instance.mStreamClip;
+            //Main.LogInfo($"SnChannel:Awake() [pool={__instance._Pool},name={__instance.name},clip={name},match?={name != null && Regex.IsMatch(name, Main.AmbientMusicRegex)}]");
+            if (__instance._Pool == "AmbSFX_Pool" && name != null && Regex.IsMatch(name,Main.AmbientMusicRegex))
+            {
+                PoolInfo pool = null;
+                if (SnChannel.mTurnedOffPools != null)
+                    foreach (var i in SnChannel.mTurnedOffPools)
+                        if (i._Group == PoolGroup.MUSIC)
+                        {
+                            pool = i;
+                            break;
+                        }
+                if (pool == null)
+                    SnChannel.mTurnedOffPools.Add(pool = new PoolInfo() { _Group = PoolGroup.MUSIC, _Name = "Music_Pool" });
+                __instance._Pool = pool._Name;
+            }
         }
     }
 
@@ -1501,6 +1493,50 @@ namespace Bugfixes
         }
     }
 #endif
+
+    // Fix the dropdown bounds check
+    [HarmonyPatch(typeof(KAUIDropDownMenu), "BoundsCheck")]
+    static class Patch_DropDownBoundsCheck
+    {
+        static void Postfix(KAUIDropDownMenu __instance, ref bool __result)
+        {
+            var bounds = NGUIMath.CalculateAbsoluteWidgetBounds(__instance._BackgroundObject.transform);
+            Main.LogInfo(bounds);
+            var vector3 = bounds.min;
+            var vector2 = bounds.max;
+            vector3 = UICamera.mainCamera.WorldToScreenPoint(vector3);
+            vector2 = UICamera.mainCamera.WorldToScreenPoint(vector2);
+            var vector = Vector2.Min(vector3, vector2);
+            vector2 = Vector2.Max(vector3, vector2);
+            Vector2 cursorPosition = UICamera.lastEventPosition;
+            __result = cursorPosition.x > vector.x && cursorPosition.x < vector2.x && cursorPosition.y < vector2.y && cursorPosition.y > vector.y;
+        }
+    }
+
+    // Change dropdown close check from mouse up to mouse down
+    [HarmonyPatch]
+    static class Patch_DropDownUpdate
+    {
+        static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(KAUIDropDown), "Update");
+            yield return AccessTools.Method(typeof(UiProfileDragonTrainerInfo), "Update");
+        }
+        public static bool calling = false;
+        static void Prefix() => calling = true;
+        static void Finalizer() => calling = false;
+    }
+    [HarmonyPatch(typeof(KAInput), "GetMouseButtonUp")]
+    static class Patch_DropDownUpdate_MouseButton
+    {
+        static bool Prefix(int inButton, ref bool __result)
+        {
+            if (!Patch_DropDownUpdate.calling)
+                return true;
+            __result = KAInput.GetMouseButtonDown(inButton);
+            return false;
+        }
+    }
 
     // Some debugging code. Used for logging various state switches along with a stacktrace
     /*[HarmonyPatch] // Logging some ui actions
